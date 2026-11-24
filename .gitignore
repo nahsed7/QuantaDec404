@@ -2,3 +2,6 @@ data/
 *.log
 node_modules/
 .env
+.node/
+.node.tar.gz
+__pycache__/

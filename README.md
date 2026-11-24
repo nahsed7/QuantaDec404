@@ -7,6 +7,7 @@ A local website with live market data (no simulations) and five analysis methods
 - **Mac/Linux/Termux:** `./start.sh` (or `node server.js`), then open http://localhost:8080
 
 No `npm install` needed.
+- **Streamlit:** `pip install -r requirements.txt` then `streamlit run app.py`. It starts the Node server and shows the lab in the page (downloads a portable Node 22 if missing).
 
 ## Sections
 1. Equity heatmap: 54 US large caps, Yahoo Finance, 15 s refresh
