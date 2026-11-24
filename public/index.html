@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Market Microstructure Laboratory</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+</head><body>
+<header class="mast">
+  <div class="mast-title">
+    <div class="kicker">Observational study · live data · no simulation</div>
+    <h1>Market Microstructure Laboratory</h1>
+  </div>
+  <div class="mast-actions">
+    <a class="btn" href="/download" title="Download the whole project as a zip">⤓ Download for PC</a>
+    <button class="btn" id="themeBtn" title="Toggle light / dark">◐ Theme</button>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button data-v="heat" class="on"><span>§1</span> Equity heatmap</button>
+  <button data-v="state"><span>§2</span> 10-D state space</button>
+  <button data-v="flow"><span>§3</span> Order flow</button>
+  <button data-v="lab"><span>§4</span> Analysis</button>
+</nav>
+
+<div class="controls" id="controls" hidden>
+  <label>Instrument <select id="sym">
+    <optgroup label="Real interbank FX (TrueFX)">
+      <option value="FX:EUR/USD" selected>EUR/USD</option><option value="FX:GBP/USD">GBP/USD</option><option value="FX:USD/JPY">USD/JPY</option>
+      <option value="FX:AUD/USD">AUD/USD</option><option value="FX:USD/CAD">USD/CAD</option><option value="FX:USD/CHF">USD/CHF</option>
+      <option value="FX:EUR/GBP">EUR/GBP</option><option value="FX:EUR/JPY">EUR/JPY</option><option value="FX:EUR/CHF">EUR/CHF</option><option value="FX:GBP/JPY">GBP/JPY</option>
+    </optgroup>
+    <optgroup label="Binance exchange (trades + order book)">
+      <option value="BTCUSDT">BTC/USDT</option><option value="ETHUSDT">ETH/USDT</option><option value="SOLUSDT">SOL/USDT</option>
+      <option value="EURUSDT">EUR/USDT (stablecoin, not interbank)</option><option value="EURUSDC">EUR/USDC (stablecoin)</option><option value="USDTTRY">USDT/TRY</option>
+    </optgroup>
+  </select></label>
+  <label id="fxsrcL">FX feed <select id="fxsrc"><option value="composite" selected>Fast composite (Kraken + interbank)</option><option value="interbank">Interbank only (TrueFX, ~1/s)</option><option value="kraken">Kraken venue (raw)</option></select></label>
+  <label>Bar Δt <select id="iv"><option>1s</option><option selected>1m</option><option>5m</option><option>15m</option></select></label>
+  <label>Sample N <select id="win"><option>120</option><option selected>300</option><option>600</option><option>1000</option></select></label>
+  <label>3D refresh <select id="fps"><option value="0">max</option><option value="30">30 fps</option><option value="15">15 fps</option><option value="10" selected>10 fps</option><option value="5">5 fps</option><option value="1">1 fps</option></select></label>
+  <span class="hint" id="ctlHint">FX: live interbank quotes from TrueFX, with history from Yahoo. Crypto: Binance trades, order book and futures sentiment.</span>
+</div>
+
+<main>
+<!-- §1 -->
+<section id="heat" class="view on">
+  <h2>§1 Cross-sectional equity returns</h2>
+  <figure class="fig wide">
+    <div class="plot tall" id="pHeat"></div>
+    <figcaption><b>Figure 1.</b> Treemap of 54 large-cap US equities grouped by GICS-style sector.
+      Colour encodes the session return <i>r</i> = <i>P</i><sub>last</sub>/<i>P</i><sub>prev close</sub> − 1 (clipped at ±3 %);
+      area ∝ approximate market capitalisation (static estimate). Quotes: Yahoo Finance, refreshed every 15 s.
+      <span class="mono" id="heatMeta"></span></figcaption>
+  </figure>
+</section>
+
+<!-- §2 -->
+<section id="state" class="view">
+  <h2>§2 Ten-dimensional market state</h2>
+  <div class="readout" id="readout"></div>
+  <div class="trade-grid">
+  <figure class="fig wide">
+    <div class="controls inline">
+      <label>Chart <select id="lmode"><option value="candles" selected>Candlesticks</option><option value="tick">Tick line</option></select></label>
+      <label class="c-only">Candle <select id="ctf"><option value="1">1 s</option><option value="5">5 s</option><option value="15" selected>15 s</option><option value="60">1 min</option><option value="300">5 min</option><option value="900">15 min</option><option value="3600">1 h</option></select></label>
+      <label class="c-only">Show <select id="cn"><option>40</option><option selected>80</option><option>150</option></select></label>
+      <label class="c-only">Price <select id="csrc"><option value="quote" selected>mid quote (broker-style)</option><option value="trade">last trade only</option></select></label>
+      <label>Easing <select id="smooth"><option value="60" selected>on (60 ms)</option><option value="25">light (25 ms)</option><option value="0">off (raw)</option></select></label>
+      <label class="t-only" hidden>Span <select id="lspan"><option value="60">1 min</option><option value="300" selected>5 min</option><option value="900">15 min</option></select></label>
+      <span class="hint" id="liveHint"></span></div>
+    <div class="live-wrap" id="liveWrap"><canvas id="cLive"></canvas></div>
+    <figcaption><b>Figure 2a.</b> Live price. <i>Candlesticks</i>: OHLC candles built from Binance klines (sub-minute candles are aggregated from 1-s klines),
+      with the forming candle's close, high and low moved by every executed trade. Bars below show volume, coloured by candle direction.
+      <i>Tick line</i>: mid price (<i>bid</i> + <i>ask</i>)/2 on every best-bid/ask change, with the spread band and trades.
+      In both, the dashed line and tag mark the current mid quote. The chart is drawn on a canvas at your display's refresh rate. <i>Easing</i> only interpolates
+      the drawn price between real quotes over the chosen time constant; it never creates prices, and "off" shows the raw quotes.</figcaption>
+  </figure>
+  <aside class="fig trade">
+    <div class="tp-head"><b>Demo account</b><span class="tag">DEMO MONEY</span><button class="btn small" id="tReset">Reset / new</button></div>
+    <div class="acct" id="acctBar"></div>
+    <label class="fld">Amount (USD)<input id="tAmt" type="number" min="0.01" step="any" value="10" inputmode="decimal"></label>
+    <div class="chips" id="tChips"></div>
+    <label class="fld">Leverage<select id="tLev"><option>1</option><option>2</option><option>5</option><option selected>10</option><option>20</option><option>50</option><option>100</option></select></label>
+    <div class="row2">
+      <label class="fld">Take profit, +$<input id="tTP" type="number" min="0" step="any" placeholder="off" inputmode="decimal"></label>
+      <label class="fld">Stop loss, −$<input id="tSL" type="number" min="0" step="any" placeholder="off" inputmode="decimal"></label>
+    </div>
+    <div class="tinfo" id="tInfo"></div>
+    <div class="bs">
+      <button class="buy" id="tBuy">BUY<span id="tAsk">–</span></button>
+      <button class="sell" id="tSell">SELL<span id="tBid">–</span></button>
+    </div>
+    <p class="note">Practice only: no real money and no real orders. Prices are live Binance quotes. BUY fills at the ask and SELL at the bid, so you pay the real spread.
+      A position is closed automatically when its loss reaches its margin (stop-out), or at your take-profit or stop-loss.</p>
+  </aside>
+  </div>
+  <figure class="fig wide" style="margin:12px 0">
+    <div class="tp-head"><b>Open positions</b><button class="btn small" id="tCloseAll">Close all</button></div>
+    <div class="tbl"><table class="pos-t"><thead><tr><th>#</th><th>Instrument</th><th>Side</th><th>Margin</th><th>Lev</th><th>Entry</th><th>Now</th><th>P&amp;L</th><th>TP / SL</th><th>Opened</th><th></th></tr></thead>
+      <tbody id="posBody"></tbody></table></div>
+    <details class="hist"><summary>Trade history: <span id="histSum"></span></summary>
+      <div class="tbl"><table class="pos-t"><thead><tr><th>#</th><th>Instrument</th><th>Side</th><th>Size</th><th>Entry</th><th>Exit</th><th>P&amp;L</th><th>Reason</th><th>Closed</th></tr></thead>
+      <tbody id="histBody"></tbody></table></div></details>
+  </figure>
+  <div class="controls inline">
+    <label>Third axis (z) <select id="zax"></select></label>
+    <label>Colour <select id="cax"></select></label>
+    <span class="hint">x = time and y = price are fixed.</span>
+  </div>
+  <div class="controls inline scene-ctl">
+    <span class="hint">View</span><div class="chips" id="views"><button class="btn chip" data-v="3d">3D</button><button class="btn chip" data-v="top">Top: price vs time</button>
+      <button class="btn chip" data-v="front">Front: z vs time</button><button class="btn chip" data-v="side">Side: z vs price</button><button class="btn chip" data-v="rotate">⟳ Auto-rotate</button></div>
+    <span class="hint">Show</span><div class="chips" id="layers"></div>
+  </div>
+  <div class="readme fig">
+    <b>How to read the 3D graph</b>
+    <ul>
+      <li><b>Each dot is one bar</b> of time. Left to right is time (0 = now), depth is price, and height is the third axis you chose.</li>
+      <li><b>Dot colour</b> is the colour dimension you chose (see the colour bar). <b>Dot size</b> is liquidity: bigger means more orders waiting in the book.</li>
+      <li><b>Dot shape</b> shows who pushed: ◆ buyers, ■ sellers, ● balanced. A hollow dot is from before order-book recording began.</li>
+      <li><b>Stem colour</b>: green means more bids waiting, red means more asks waiting. The <b>floor line</b> is the price path.</li>
+      <li>The <b>violet cloud</b> on the right shows where price has tended to go from here in this sample. Denser means more often. It describes the past, not a prediction.</li>
+      <li><b>Drag</b> to rotate, <b>scroll or pinch</b> to zoom, <b>click a dot</b> for an explanation, and use the chips to change the view or hide layers.</li>
+    </ul>
+  </div>
+  <div class="grid2 key-grid">
+    <figure class="fig span2">
+      <div class="plot tall" id="p8d"></div>
+      <figcaption><b>Figure 2.</b> Each marker is one bar. Spatial axes: time relative to now, price <i>P</i>, and the selected third axis.
+        The remaining dimensions are encoded by colour, size, shape, stem colour, floor-path colour and the surface (Table 1, updated live).
+        The bright point at <i>t</i> = 0 is the live mid price. The violet cloud of sprinkles to the right of now
+        is the empirical distribution of future prices, estimated with a Gaussian kernel from all overlapping <i>h</i>-bar log-returns
+        in the sample. It is an unconditional description of past behaviour, not a forecast.</figcaption>
+    </figure>
+    <figure class="fig table-fig">
+      <table class="enc">
+        <caption><b>Table 1.</b> Channel encoding</caption>
+        <thead><tr><th>#</th><th>Dimension</th><th>Channel</th><th>Definition</th></tr></thead>
+        <tbody id="encBody"></tbody>
+      </table>
+      <div class="inspect" id="inspect"></div>
+      <p class="note" id="sentNote"></p>
+    </figure>
+  </div>
+  <figure class="fig wide" style="margin-top:12px">
+    <div class="plot" id="pDepth" style="height:300px"></div>
+    <figcaption><b>Figure 2b.</b> Order-book depth profile (dimensions 9–10), recorded by the local server every 3 s: bid depth plotted upward,
+      ask depth mirrored downward, both in quote currency within ±10 bp of mid. Dotted line, right axis: depth imbalance.</figcaption>
+  </figure>
+</section>
+
+<!-- §3 -->
+<section id="flow" class="view">
+  <h2>§3 Trade-level order flow</h2>
+  <div class="controls inline"><label>Window <select id="fwin"><option value="60">1 min</option><option value="300" selected>5 min</option>
+    <option value="900">15 min</option><option value="3600">1 h</option></select></label></div>
+  <div class="readout" id="flowReadout"></div>
+  <figure class="fig wide">
+    <div class="plot tall" id="pFlow"></div>
+    <figcaption><b>Figure 3.</b> Every executed trade as it occurs (Binance aggregate-trade stream). x: seconds before now; y: execution price;
+      z: signed size, positive when the buyer was the aggressor and negative when the seller was. The blue trace on the floor is the price path.</figcaption>
+  </figure>
+</section>
+
+<!-- §4 -->
+<section id="lab" class="view">
+  <h2>§4 Analysis</h2>
+  <p class="lede" id="labLede">Computed live from the same sample as §2.</p>
+  <div class="readout" id="labReadout"></div>
+
+  <h3>4.1 Multivariate time-series analysis</h3>
+  <div class="grid2">
+    <figure class="fig"><div class="plot" id="pCorr"></div>
+      <figcaption><b>Figure 4.</b> Pearson correlation matrix of the bar-level feature vector.</figcaption></figure>
+    <figure class="fig"><div class="plot" id="pXcorr"></div>
+      <figcaption><b>Figure 5.</b> Cross-correlation ρ(π<sub>t</sub>, <i>r</i><sub>t+k</sub>). Positive <i>k</i> means pressure leads returns. Dashed lines: ±2/√N significance band.</figcaption></figure>
+    <figure class="fig span2"><div class="plot" id="pTraces"></div>
+      <figcaption><b>Figure 6.</b> Multichannel trace: z-scored features, vertically offset.</figcaption></figure>
+  </div>
+
+  <h3>4.2 Dynamical systems</h3>
+  <div class="grid2">
+    <figure class="fig"><div class="plot" id="pEmbed"></div>
+      <figcaption><b>Figure 7.</b> Takens delay embedding (<i>x</i><sub>t</sub>, <i>x</i><sub>t−τ</sub>, <i>x</i><sub>t−2τ</sub>) of detrended log-price
+        <i>x</i> = ln <i>C</i> − SMA<sub>30</sub>(ln <i>C</i>). τ is the first lag where the autocorrelation drops below 1/e. Colour runs from early (dark) to late (light).</figcaption></figure>
+    <figure class="fig"><div class="plot" id="pRecur"></div>
+      <figcaption><b>Figure 8.</b> Distance recurrence plot ‖<b>x</b><sub>i</sub> − <b>x</b><sub>j</sub>‖ over the last 200 embedded states.
+        Diagonal structures indicate deterministic recurrence; blocks indicate regimes.</figcaption></figure>
+  </div>
+
+  <h3>4.3 Information geometry</h3>
+  <div class="grid2">
+    <figure class="fig"><div class="plot" id="pPoinc"></div>
+      <figcaption><b>Figure 9.</b> Trajectory of rolling Gaussian fits 𝒩(μ, σ²) of returns (window 30, step 3) in the Poincaré
+        upper half-plane (μ/√2, σ), where the Fisher–Rao metric is hyperbolic.</figcaption></figure>
+    <figure class="fig"><div class="plot" id="pFR"></div>
+      <figcaption><b>Figure 10.</b> Fisher–Rao distance between consecutive fits,
+        <i>d</i> = 2√2 artanh δ, where δ² = [(Δμ)²/2 + (Δσ)²] / [(Δμ)²/2 + (σ₁+σ₂)²]. Spikes mark changes in the return distribution.</figcaption></figure>
+  </div>
+
+  <h3>4.4 Topological data analysis</h3>
+  <div class="grid2">
+    <figure class="fig"><div class="plot" id="pBar"></div>
+      <figcaption><b>Figure 11.</b> H<sub>0</sub> persistence barcode of the Vietoris–Rips filtration on the embedded point cloud (Figure 7, last 200 states),
+        computed exactly via Kruskal's minimum spanning tree. Long bars are well-separated clusters of market states.</figcaption></figure>
+    <figure class="fig"><div class="plot" id="pBetti"></div>
+      <figcaption><b>Figure 12.</b> Betti-0 curve β<sub>0</sub>(ε), the number of connected components at scale ε.</figcaption></figure>
+  </div>
+
+  <h3>4.5 Manifold learning</h3>
+  <div class="controls inline"><label>Method <select id="mmethod"><option value="pca">PCA (linear)</option><option value="iso">Isomap (k = 10, geodesic)</option></select></label></div>
+  <div class="grid2">
+    <figure class="fig"><div class="plot" id="pMani"></div>
+      <figcaption><b>Figure 13.</b> Low-dimensional embedding of the standardised feature vectors (one point per bar). Colour runs from early to late.</figcaption></figure>
+    <figure class="fig"><div class="plot" id="pLoad"></div>
+      <figcaption><b>Figure 14.</b> PCA loadings of each feature on the first three components, with explained variance.</figcaption></figure>
+  </div>
+</section>
+</main>
+
+<div class="setup" id="setup" hidden><div class="setup-card fig">
+  <h2>Open a demo account</h2>
+  <p class="note">Choose how much demo money to start with. You can reset at any time.</p>
+  <div class="chips" id="setupChips"></div>
+  <div class="row2"><label class="fld">Custom amount (USD)<input id="setupCustom" type="number" min="0.01" step="any" placeholder="e.g. 2500" inputmode="decimal"></label>
+    <div style="display:flex;gap:8px;align-items:flex-end"><button class="btn" id="setupGo">Start</button><button class="btn" id="setupCancel">Cancel</button></div></div>
+</div></div>
+<div class="toast" id="toast"></div>
+<footer class="status mono" id="status"></footer>
+<script src="lab.js"></script>
+<script src="app.js"></script>
+<script src="trade.js"></script>
+</body></html>
