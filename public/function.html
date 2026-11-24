@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Live Price Function</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<style>
+  .fn-wrap{max-width:1480px;margin:0 auto;padding:0 16px 40px}
+  .fn-ctl{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;margin:14px 0}
+  .fn-ctl label{font:500 12px var(--mono);color:var(--muted);display:flex;gap:6px;align-items:center}
+  .fn-ctl select,.fn-ctl input[type=range]{font:12px var(--mono)}
+  #ggb{width:100%;height:min(70vh,720px);border:1px solid var(--line);border-radius:4px;overflow:hidden;background:#fff}
+  .fn-stats{font:13px var(--mono);margin:10px 0 4px}
+  .fn-status{font:12px var(--mono);color:var(--muted)}
+  .fn-out{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:14px;margin-top:14px}
+  .fn-out h3{margin-top:0;display:flex;justify-content:space-between;align-items:center}
+  .fn-out textarea{width:100%;box-sizing:border-box;height:150px;font:12px/1.4 var(--mono);color:var(--text);background:var(--panel-solid);border:1px solid var(--line);border-radius:4px;padding:8px;resize:vertical}
+  .fn-math{font:13px/1.7 var(--mono);background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:10px 14px;margin-top:14px;overflow-x:auto}
+</style>
+</head><body>
+<header class="mast">
+  <div class="mast-title">
+    <div class="kicker">Live data · fitted every second · no simulation</div>
+    <h1>Live price function P(x)</h1>
+  </div>
+  <div class="mast-actions"><a class="btn" href="/">← Back to the lab</a></div>
+</header>
+
+<div class="fn-wrap">
+  <div class="fn-ctl">
+    <label>Instrument <select id="sym">
+      <optgroup label="FX (composite / interbank)">
+        <option value="FX:EUR/USD" selected>EUR/USD</option><option value="FX:GBP/USD">GBP/USD</option><option value="FX:USD/JPY">USD/JPY</option>
+        <option value="FX:AUD/USD">AUD/USD</option><option value="FX:USD/CAD">USD/CAD</option><option value="FX:USD/CHF">USD/CHF</option>
+        <option value="FX:EUR/GBP">EUR/GBP</option><option value="FX:EUR/JPY">EUR/JPY</option><option value="FX:EUR/CHF">EUR/CHF</option><option value="FX:GBP/JPY">GBP/JPY</option>
+      </optgroup>
+      <optgroup label="Binance">
+        <option value="BTCUSDT">BTC/USDT</option><option value="ETHUSDT">ETH/USDT</option><option value="SOLUSDT">SOL/USDT</option>
+      </optgroup>
+    </select></label>
+    <label>Window <select id="win"><option value="15m">last 15 min (1-s bars)</option><option value="1h" selected>last 1 hour</option><option value="4h">last 4 hours</option><option value="16h">last 16 hours</option></select></label>
+    <label>Harmonics K <input type="range" id="K" min="3" max="80" value="30"><span id="Kv"></span></label>
+    <label>View <select id="mode"><option value="2d" selected>2D: price vs time</option><option value="3d">3D: time × price × buy pressure</option></select></label>
+    <label><input type="checkbox" id="raw" checked> show real data</label>
+    <label><input type="checkbox" id="live" checked> live (1 s)</label>
+  </div>
+
+  <div id="ggb"></div>
+  <div class="fn-stats" id="stats">Loading…</div>
+  <div class="fn-status" id="status"></div>
+
+  <div class="fn-out">
+    <div><h3>Desmos <button class="btn" data-copy="fDesmos">Copy</button></h3>
+      <textarea id="fDesmos" readonly></textarea>
+      <div class="fn-status">Paste each line into its own expression at desmos.com/calculator. It is a snapshot; copy again for newer data.</div></div>
+    <div><h3>GeoGebra <button class="btn" data-copy="fGeo">Copy</button></h3>
+      <textarea id="fGeo" readonly></textarea>
+      <div class="fn-status">Paste each line into the input bar at geogebra.org/calculator (use geogebra.org/3d for the curve c).</div></div>
+  </div>
+
+  <div class="fn-math">
+    <b>What the function is.</b> x is time in minutes, with x = 0 now and x = −T the start of the window.<br>
+    P(x) = p₀ + u·( m·x + Σₖ aₖ·sin(kπ(x+T)/T) ), where p₀ is the latest real price and u is 1 pip (FX) or about 1/10 000 of the price.<br>
+    The straight line from the first to the last price is removed, and the rest is fitted to real bars by least squares on K sine waves.
+    So P(0) is exactly the current price, and more harmonics follow the data more closely (the fit error is shown above).<br>
+    B(x) is buy pressure from −1 (all selling) to +1 (all buying): 2·(buy volume ÷ volume) − 1 per bar, fitted the same way.
+    On Kraken-backed FX pairs and Binance it uses real trades; on other FX pairs it uses up-ticks vs down-ticks.<br>
+    The function describes the past window only. It is not a forecast; outside −T ≤ x ≤ 0 it is undefined.
+  </div>
+</div>
+<script src="https://www.geogebra.org/apps/deployggb.js"></script>
+<script src="fn.js"></script>
+</body></html>
