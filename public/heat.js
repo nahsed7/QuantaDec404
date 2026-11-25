@@ -134,7 +134,7 @@
         ${d.dataNotes?.length ? `<div class="warn small">${d.dataNotes.map(esc).join('<br>')}</div>` : ''}</div>
         <div><button class="btn mini" id="cpCmp">${st.compare.includes(d.sym) ? '− Remove from compare' : '+ Compare'}</button></div></div>
       <div class="cp-scores">${scoreCard('Opportunity', d.decision.opportunity)}${scoreCard('Risk', d.decision.risk)}${scoreCard('Confidence', d.decision.confidence)}</div>
-      <p class="cp-interp">${esc(d.decision.interpretation)}</p><p class="muted"><i>${esc(E.moveContext({ ...d, valuation: d.valuation.synthesis }).text)}</i></p>
+      <p class="cp-interp">${esc(d.decision.interpretation)}</p>${d.regime?.available ? `<p class="muted">Market regime (${esc(d.marketName || 'S&P 500')}): <b>${esc(d.regime.trend)}</b>, volatility ${esc(d.regime.volatility.regime)}, ${pu(d.regime.trendAgreement, 0)} of indicators agree (uncertainty ${esc(d.regime.uncertainty)}).</p>` : ''}<p class="muted"><i>${esc(E.moveContext({ ...d, valuation: d.valuation.synthesis }).text)}</i></p>
       <p class="cp-val">Valuation ${badge('estimate')}: ${fin(v.base) ? `conservative <b>${num(v.low)}</b> · base <b>${num(v.base)}</b> · optimistic <b>${num(v.high)}</b> (${esc(modelName(d, v.primary))}) · price ${pc(v.premium, 0)} vs base` : 'no applicable model'}
         · <span style="color:${status.colour || 'inherit'}">${esc(status.label)}</span>${v.notes?.length ? `<br><span class="muted">${v.notes.map(esc).join(' ')}</span>` : ''}</p>
       <nav class="cp-tabs">${TABS.map(([k, l]) => `<button data-tab="${k}" class="${st.tab === k ? 'on' : ''}">${l}</button>`).join('')}</nav>
@@ -168,7 +168,9 @@
 
   // Valuation tab: every model separately, an assumption editor that recomputes in the browser, sensitivity and scenarios.
   const EDIT = [['growth', 'Revenue growth, years 1–5', 'pct'], ['opMargin', 'Operating margin', 'pct'], ['discountRate', 'Discount rate (WACC)', 'pct'], ['costEquity', 'Cost of equity', 'pct'],
-    ['terminalGrowth', 'Terminal growth', 'pct'], ['capexPct', 'Capex, % of revenue', 'pct'], ['eps', 'EPS forecast (per share)', 'num'], ['debt', 'Debt (reporting currency)', 'big'], ['cash', 'Cash & investments (reporting currency)', 'big']];
+    ['terminalGrowth', 'Terminal growth', 'pct'], ['capexPct', 'Capex, % of revenue', 'pct'], ['eps', 'EPS forecast (per share)', 'num'], ['debt', 'Debt (reporting currency)', 'big'], ['cash', 'Cash & investments (reporting currency)', 'big'],
+    ['beta', 'β (Blume-adjusted)', 'num'], ['erp', 'Equity risk premium', 'pct'], ['rf', 'Risk-free rate', 'pct']];
+  const REDERIVE = new Set(['beta', 'erp', 'rf']);   // editing these recomputes cost of equity and WACC
   function tabValuation(d) {
     const ctx = d.valuation.ctx, a = st.edit, ms = V.runAll(ctx, a), syn = V.synthesize(ms, d.price, ctx), changed = EDIT.some(([k]) => a[k] !== d.valuation.assumptions[k]);
     const scen = V.scenarios(ctx, a), dcf = ms.find(m => m.id === 'dcf');
@@ -184,7 +186,12 @@
         <p class="muted">Inputs: ${Object.entries(m.inputs).map(([k, x]) => `${esc(k)} ${fin(x) ? (Math.abs(x) > 1e6 ? big(x) : Math.abs(x) < 1 ? x.toFixed(4) : num(x)) : 'n/a'}`).join(' · ')}</p>
         ${m.detail?.multiples ? `<table class="cp-t"><tr><th>Multiple</th><th>Peers</th><th>25th</th><th>Median</th><th>75th</th><th>Implied base</th></tr>${m.detail.multiples.map(x => `<tr><td>${x.multiple}</td><td>${x.peers}</td><td>${num(x.q25, 1)}</td><td>${num(x.median, 1)}</td><td>${num(x.q75, 1)}</td><td>${num(x.base)}</td></tr>`).join('')}</table>` : ''}
         ${m.detail?.percentile != null ? `<p>Current P/E ${num(m.detail.currentPE, 1)} is at the ${(100 * m.detail.percentile).toFixed(0)}th percentile of ${m.detail.years} fiscal-year-end values.</p>` : ''}` : ''}
-        <p class="muted">Data as of last filing ${esc(d.fresh?.filed || 'n/a')}; prices ${d.fresh?.priceTime ? new Date(d.fresh.priceTime).toLocaleString() : 'n/a'}.</p></details>`).join('')}</div>
+        ${m.applicable && m.confidence ? `<p><b>Model confidence: <span class="conf-${m.confidence.level}">${m.confidence.level}</span></b> <span class="muted">(${m.confidence.reasons.map(esc).join(' ')})</span></p>` : ''}
+        ${m.applicable && m.id !== 'dcf' && m.sensitivity?.length ? `<p><b>Sensitivity</b> (base ${num(m.base)})</p>${sensTable(m.sensitivity)}` : ''}
+        <p class="muted">Freshness: uses ${esc(m.freshness?.uses || '')}. Latest filing ${esc(m.freshness?.filed || d.fresh?.filed || 'n/a')}${fin(m.freshness?.filingAgeDays) ? ` (${Math.round(m.freshness.filingAgeDays)} days ago)` : ''}; price ${when(d.fresh?.priceTime)}.</p></details>`).join('')}</div>
+      <h4>Where the models disagree <span class="muted">(each cross-check vs the primary range ${fin(syn.low) ? `${num(syn.low)} … ${num(syn.high)}` : ''})</span></h4>
+      ${syn.disagreements?.length ? `<table class="cp-t"><tr><th>Model</th><th>Base</th><th>vs primary base</th><th>Position</th><th>Ranges overlap</th></tr>${syn.disagreements.map(x => `<tr><td>${esc(x.name)}${x.reference ? ' <span class="muted">(reference)</span>' : ''}</td><td>${num(x.base)}</td><td>${pc(x.vsPrimary, 0)}</td><td class="${x.position === 'inside' ? '' : 'warn'}">${x.position}</td><td>${x.overlap ? 'yes' : '<b>no</b>'}</td></tr>`).join('')}</table>
+        <p class="muted">Models are not averaged. Disagreement is information: models built on different inputs (cash flows, dividends, peers, book value, own history) pointing in different directions means the valuation is genuinely uncertain.</p>` : '<p class="muted">No cross-check model available.</p>'}
       <h4>Sensitivity of the DCF base value</h4>${dcf?.applicable ? '<div class="plot" id="cpTornado" style="height:260px"></div>' : '<p class="muted">DCF not applicable.</p>'}
       <h4>Scenarios <span class="muted">(change in each model's base value; sorted by effect on the primary model)</span></h4>
       <table class="cp-t"><tr><th>Scenario</th>${ms.map(m => `<th>${esc(m.id)}</th>`).join('')}<th>Primary</th><th>Classification</th></tr>
@@ -193,6 +200,7 @@
       const x = parseFloat(inp.value), t = inp.dataset.t; if (!fin(x)) return;
       const k = inp.dataset.k, val = t === 'pct' ? x / 100 : t === 'big' ? x * 1e9 : x, old = st.edit[k];
       st.edit[k] = val;
+      if (REDERIVE.has(k)) st.edit = V.rederive(st.edit);
       if (k === 'growth' && fin(old)) { st.edit.growthLo += val - old; st.edit.growthHi += val - old; }
       if (k === 'terminalGrowth' && fin(old)) { st.edit.terminalLo += val - old; st.edit.terminalHi += val - old; }
       tabValuation(d);
@@ -216,10 +224,13 @@
     }
   }
 
+  function sensTable(rows) {
+    return `<table class="cp-t"><tr><th>Input moved</th><th>Value if lower</th><th>Value if higher</th><th>Swing</th></tr>${rows.map(r => `<tr><td>${esc(r.label)}</td><td>${num(r.down)}</td><td>${num(r.up)}</td><td>${fin(r.base) && r.base ? pu(r.swing / Math.abs(r.base), 0) : num(r.swing)}</td></tr>`).join('')}</table>`;
+  }
   function tabHistory(d) {
     $('cpTab').innerHTML = `<div class="plot" id="cpHist" style="height:420px"></div>
-      <p class="muted">Price: Yahoo month-end closes (10 years) and daily closes (5 years), split-adjusted ${badge('historical')}. Valuation points ${badge('estimate')}: DCF and earnings-power models rerun with only the filings available at each fiscal-year end and that month's 10-year yield.
-      They use today's beta and the latest restated filings, so they are not strictly point-in-time.</p>
+      <p class="muted">Price: Yahoo month-end closes (10 years) and daily closes (5 years), split-adjusted, in ${esc(d.ccy)} ${badge('historical')}. Valuation points ${badge('estimate')}: DCF, earnings-power and book models rerun <b>point-in-time</b>: only the filings public on the day each annual report was filed (later restatements excluded), priced at that month's close and that month's ${esc(d.rfInfo?.label || 'risk-free rate')}.
+      β and the equity risk premium are today's values (no free point-in-time β).${d.restated?.revised ? ` ${d.restated.revised} of ${d.restated.compared} annual values were later restated.` : ''}</p>
       <div class="plot" id="cpPE" style="height:220px"></div>`;
     const fg = css('--text'), lay = (extra) => ({ paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)', font: { family: 'IBM Plex Mono', size: 11, color: fg }, margin: { l: 56, r: 16, t: 10, b: 30 }, legend: { orientation: 'h', y: 1.08 }, ...extra });
     const vh = d.valuationHistory || [], tr = [
@@ -248,7 +259,8 @@
         ['12−1 month momentum', pc(m.mom12_1), 'standard momentum measure, skips the last month'],
         ['Price vs 50 / 200-day average', `${m.aboveSMA[50] == null ? 'n/a' : m.aboveSMA[50] ? 'above' : 'below'} / ${m.aboveSMA[200] == null ? 'n/a' : m.aboveSMA[200] ? 'above' : 'below'}`, `SMA50 ${num(m.sma[50])}, SMA200 ${num(m.sma[200])}`],
         ['50-day average slope (1 month)', pc(m.sma50Slope)],
-        ['Relative strength vs S&P 500 / sector (3m)', `${pc(m.relMarket63)} / ${pc(m.relSector63)}`],
+        [`Relative strength vs ${d.marketName || 'market'} / sector (3m)`, `${pc(m.relMarket63)} / ${pc(m.relSector63)}`, 'return minus index return, and minus sector-peer median, on common dates'],
+        ['Total return incl. dividends 1m / 3m / 1y', m.totalReturns ? [21, 63, 252].map(n => pc(m.totalReturns[n])).join(' / ') : 'n/a', `listing currency (${esc(d.listing?.ccy || d.ccy)}), dividends reinvested on the ex-date`],
         ['Trend persistence (3m)', `R² ${fin(m.trendR2) ? m.trendR2.toFixed(2) : 'n/a'}, ${pu(m.upDayShare, 0)} up days`, 'R² of log price vs time'],
         ['Acceleration', pc(m.accel), '3-month return now minus 1 month ago'],
         ['Volume confirmation', fin(m.upDownVolume) ? m.upDownVolume.toFixed(2) + '×' : 'n/a', 'avg volume on up days ÷ down days, 2 months'],
@@ -256,7 +268,7 @@
       <h4>Movement exhaustion ${badge('estimate')}</h4>${x.available ? `${kv([
         ['Distance from 50-day average', fin(x.distSMA50) ? x.distSMA50.toFixed(2) + ' σ' : 'n/a'], ['1-month return percentile (own history)', fin(x.ret21Pct) ? (100 * x.ret21Pct).toFixed(0) + 'th' : 'n/a'],
         ['Volatility expansion (20d ÷ 120d)', fin(x.volExpansion) ? x.volExpansion.toFixed(2) + '×' : 'n/a'], ['RSI(14)', fin(x.rsi) ? x.rsi.toFixed(0) : 'n/a', x.divergence ? x.divergence + ' divergence' : ''],
-        ['Volume anomaly', fin(x.volumeZ) ? x.volumeZ.toFixed(1) + ' σ' : 'n/a'], ['Valuation deviation', pc(x.valuationPremium, 0)]])}
+        ['Volume anomaly', fin(x.volumeZ) ? x.volumeZ.toFixed(1) + ' σ' : 'n/a'], ['Relative-strength divergence', x.rsDivergence || 'none', `vs ${d.marketName || 'index'}: new price high/low not confirmed by the price ÷ index ratio`], ['Valuation deviation', pc(x.valuationPremium, 0)]])}
         ${list('Signals present', x.signals)}<p class="muted">${esc(x.caveat)}</p>` : `<p class="muted">${esc(x.reason)}</p>`}
       <h4>Volatility ${badge('historical')}</h4>${vo.available ? kv([
         ['Historical σ 20d / 60d / 1y / 5y', [vo.hv20, vo.hv60, vo.hv252, vo.hvAll].map(v => pu(v)).join(' / '), 'annualised close-to-close'],
@@ -264,15 +276,18 @@
         ['Clustering (autocorr. of r², lags 1–5)', vo.clustering.map(c => fin(c) ? c.toFixed(2) : 'n/a').join(' '), 'positive = volatile days bunch together'],
         ['Max drawdown 1y / 5y, current', `${pu(vo.maxDrawdown1y)} / ${pu(vo.maxDrawdown)}, now ${pu(vo.currentDrawdown)}`],
         ['1-day VaR / ES (95 %, historical 1y)', `${pu(vo.var95, 2)} / ${pu(vo.es95, 2)}`, `worst day ${pu(vo.worstDay, 2)}; skew ${fin(vo.skew) ? vo.skew.toFixed(2) : 'n/a'}, excess kurtosis ${fin(vo.kurtosis) ? vo.kurtosis.toFixed(1) : 'n/a'}`],
-        ['σ when the market is above / below its 200-day average', vo.regimeVol ? `${pu(vo.regimeVol.marketUp)} / ${pu(vo.regimeVol.marketDown)}` : 'n/a', vo.regimeVol ? `${vo.regimeVol.nUp} / ${vo.regimeVol.nDown} days` : ''],
-        ['β vs S&P 500 (SPY, 2y daily)', fin(vo.beta) ? vo.beta.toFixed(2) : 'n/a'],
+        [`σ when ${d.marketName || 'the market'} is above / below its 200-day average`, vo.regimeVol ? `${pu(vo.regimeVol.marketUp)} / ${pu(vo.regimeVol.marketDown)}` : 'n/a', vo.regimeVol ? `${vo.regimeVol.nUp} / ${vo.regimeVol.nDown} days` : ''],
+        ['σ in calm / turbulent markets', vo.regimeVol ? `${pu(vo.regimeVol.marketCalm)} / ${pu(vo.regimeVol.marketTurbulent)}` : 'n/a', vo.regimeVol ? `index 20-day σ below / above its median (measured to the previous day); ${vo.regimeVol.nCalm} / ${vo.regimeVol.nTurbulent} days` : ''],
+        [`β vs ${vo.betaVs || 'market'} (2y daily)`, fin(vo.beta) ? `${vo.beta.toFixed(2)} ± ${fin(vo.betaSE) ? vo.betaSE.toFixed(2) : 'n/a'}` : 'n/a', fin(vo.betaN) ? `${vo.betaN} common trading days; ± is one standard error` : 'no common trading days with an index'],
       ]) : `<p class="muted">${esc(vo.reason)}</p>`}
       <h4>Liquidity</h4>${l.available ? kv([
         ['Median daily volume / traded value', `${big(l.advShares)} shares / $${big(l.addv)}`, '1 month'], ['Turnover', pu(l.turnover, 3), 'daily volume ÷ shares outstanding'],
         ['Amihud illiquidity', fin(l.amihud) ? l.amihud.toFixed(4) : 'n/a', '|return| per $1 B traded'],
         ['Bid–ask spread', fin(l.quotedSpread) ? pu(l.quotedSpread, 3) + ' quoted' : fin(l.spreadEst) ? pu(l.spreadEst, 3) + ' (estimate)' : 'n/a', 'estimated from daily high/low/close (Abdi–Ranaldo); no quoted spread in the free feed'],
         ['Market depth', 'not available', 'no free order-book data for US equities'],
-      ]) + `<p>Estimated cost to trade $<input id="cpUsd" value="100000" size="10">: <b id="cpCost"></b></p><p class="muted">Theoretical: half-spread plus square-root market impact σ·√(order ÷ daily value). Actual execution depends on time of day, order type and venue.</p>` : `<p class="muted">${esc(l.reason)}</p>`}`;
+      ]) + `<p>Estimated cost to trade $<input id="cpUsd" value="100000" size="10">: <b id="cpCost"></b></p>
+        ${l.costCurve?.length ? `<table class="cp-t"><tr><th>Order (US$)</th><th>Share of daily value</th><th>Half-spread</th><th>Slippage (impact)</th><th>Total</th><th></th></tr>${l.costCurve.map(c => `<tr><td>$${big(c.usd)}</td><td>${pu(c.participation, 3)}</td><td>${fin(c.halfSpread) ? (1e4 * c.halfSpread).toFixed(1) + ' bp' : 'n/a'}</td><td>${c.slippageBp.toFixed(1)} bp</td><td><b>${c.bp.toFixed(1)} bp</b></td><td class="${c.feasible ? 'muted' : 'warn'}">${c.feasible ? '' : '> 10 % of daily value: would take days to fill'}</td></tr>`).join('')}</table>` : ''}
+        <p class="muted"><b>Theoretical tradeability, not actual execution.</b> Half-spread (estimated from daily high/low/close, Abdi–Ranaldo) plus square-root market impact σ·√(order ÷ daily value). Real fills depend on time of day, order type, venue, the order book (not available for equities here) and news.</p>` : `<p class="muted">${esc(l.reason)}</p>`}`;
     const cost = () => { const c = Q.tradeCost(l, +$('cpUsd').value || 0); $('cpCost').textContent = c ? `${(1e4 * c.total).toFixed(1)} bp ≈ $${num(c.total * (+$('cpUsd').value || 0), 0)} (spread ${fin(c.halfSpread) ? (1e4 * c.halfSpread).toFixed(1) : 'n/a'} bp ${c.spreadSource}, impact ${(1e4 * c.impact).toFixed(1)} bp, ${pu(c.participation, 3)} of daily value)` : 'n/a'; };
     if (l.available) { $('cpUsd').oninput = cost; cost(); }
   }

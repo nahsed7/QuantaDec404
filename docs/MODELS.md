@@ -1,0 +1,159 @@
+# Analytical models: formulas, inputs, assumptions and limitations
+
+Every module in `lib/` is a pure function of its inputs. The same code runs in the browser, on the server and in the tests.
+
+**Notation:**
+- *r* = discount rate;
+- *g* = growth;
+- *g*ᵀ = terminal growth;
+- *k*ₑ = cost of equity;
+- *r*f = risk-free rate;
+- β = beta;
+- ERP = equity risk premium;
+- σ = standard deviation.
+
+Every constant below is an **assumption**, and the user can override it per company in the research panel (Valuation tab).
+
+---
+
+## 1. Valuation (`lib/valuation.js`)
+
+### 1.1 Common inputs (`defaults`)
+
+| Quantity | Formula / source | Rationale |
+|---|---|---|
+| Risk-free *r*f | US: 10-year Treasury (daily par curve). Other currencies: OECD 10-year government yield via FRED (EUR uses the Bund). TWD, CNY and HKD fall back to the US rate, flagged. | Long-dated, matches a long-lived equity cash flow. |
+| β | OLS slope of 2 years of daily log returns against the local index on common dates; Blume-adjusted 0.67·β + 0.33. If unmeasured, 1. | Raw betas mean-revert towards 1 (Blume 1975). |
+| ERP | 5 % | Long-run US historical and implied estimates mostly fall in 4–6 %. |
+| *k*ₑ | *r*f + β·ERP | CAPM. |
+| Pre-tax cost of debt | interest ÷ debt, clamped to [*r*f, *r*f + 6 %]; if unmeasurable, *r*f + 1.5 % | |
+| Tax | median effective rate of the last 5 years; otherwise the combined statutory rate of the country (OECD 2024) | |
+| WACC | (E·*k*ₑ + D·*k*d·(1 − t)) / (E + D), with **floor *r*f + 2 %** | Large cheap debt (captive finance, utilities) otherwise drives WACC towards *r*f. |
+| *g*ᵀ | min(2.5 %, *r*f − 0.5 %) | Terminal growth cannot exceed long-run nominal growth, proxied by the long rate. |
+| Growth (years 1–5) | *g*ᵀ + 0.5·(*g*hist − *g*ᵀ), where *g*hist is the median of the 1-, 3- and 5-year revenue CAGRs; clamped to [−5 %, 15 %]. Range ±4 pts. | Revenue growth shows little persistence (Chan, Karceski & Lakonishok 2003), so history is shrunk, not extrapolated. |
+| Operating margin | 5-year mean of operating income ÷ revenue; band = max(2 pts, 5-year σ) | |
+| Capex, D&A | 5-year mean, % of revenue | |
+| Working capital | 5 % of new revenue | assumption |
+
+### 1.2 The six models
+
+| Model | Base value per share | Conservative / optimistic | Applies to | Main limitations |
+|---|---|---|---|---|
+| **DCF (FCFF)** | 10-year projection: growth *g* for years 1–5, linear fade to *g*ᵀ by year 10. FCFF = Rev·m·(1−t) + Rev·D&A% − Rev·capex% − nwc·ΔRev. Net investment (capex − D&A) is floored at 0 and scales to *g*ᵀ/*g* by year 10. TV = FCFF₁₀·(1+*g*ᵀ)/(r − *g*ᵀ). Equity = EV − debt + cash. | 10th / 90th percentile of 2,000 seeded Monte-Carlo draws (triangular on growth, margin, WACC ±1 pt, terminal growth) | non-financials with positive margin | Terminal-value share; margin assumed stable; captive-finance groups (Honda, Toyota) are misspecified |
+| **Dividend discount** | Two-stage: DPS grows *g*₁ = min(5-year DPS CAGR, ROE·(1−payout)) for 5 years, then *g*ᵀ; discounted at *k*ₑ | *g*₁ ∓ 2 pts, *g*ᵀ 1.5 % / 3 %, *k*ₑ ± 1 pt | dividend payers; leads only if payout ≥ 50 % of FCF | ignores buybacks |
+| **Comparables** | Median across multiples (P/E, EV/EBIT, EV/Sales, P/FCF; P/E and P/B for financials) of peer-median multiple × own metric | peer 25th / 75th percentile | ≥ 3 sector peers with usable multiples | relative only; peers differ in growth and accounting (IFRS vs US GAAP) |
+| **Earnings power** | Rev·m̄·(1−t) / WACC − net debt (financials: 3-year mean EPS / *k*ₑ) | WACC ± 1 pt | positive margin | zero growth: a floor for growing firms |
+| **Asset-based** | Book equity / share. Financials: justified P/B = (ROE − g)/(*k*ₑ − g) × book | tangible book; *k*ₑ ± 1 pt | positive equity | reference only for non-financials |
+| **Own history** | current EPS × median own P/E at fiscal-year ends | 25th / 75th percentile P/E | ≥ 5 years of positive P/E | assumes the past valuation regime persists |
+
+### 1.3 Outputs common to every model
+- `low`, `base`, `high`: conservative, base and optimistic values (sorted).
+- `inputs`, `assumptions[]`, `limitations[]`.
+- `sensitivity[]`: one-at-a-time shocks, each input moved down and up with the model rerun.
+  - DCF: growth ±2 pts, margin ±2 pts, WACC ±1 pt, terminal ±0.5 pt, capex ±1 pt, debt and cash ±20 %.
+  - Other models: their own inputs (see `SHOCKS`).
+- `freshness`: latest filing date and age, price time, and which data the model uses.
+- `confidence`: `high` / `medium` / `low`. It starts high, and each detected weakness lowers it one level:
+  - range > 1.5× (> 2× counts as wide);
+  - terminal value > 75 % of the total;
+  - fewer than 6 peers;
+  - fewer than 8 years of history;
+  - reference-only model;
+  - filing > 450 days old;
+  - share-count conflict.
+
+  Levels, not numbers: finer precision would be false.
+
+### 1.4 Synthesis (no averaging)
+- One **primary** model defines the range:
+  - non-financials: DCF → history → comparables → DDM (if payout ≥ 50 % of FCF) → EPV;
+  - financials: book → history → comparables → EPV → DDM.
+- The others are cross-checks:
+  - `agreement` = share of other models whose base lies inside the primary range;
+  - `dispersion` = σ of the log base values;
+  - `disagreements[]` lists each model's base vs the primary: inside / below / above, % difference, and whether the ranges overlap.
+- **Classification:**
+  - below / within / above the primary range;
+  - **uncertain** if the range is wider than 2.5× or the dispersion exceeds 0.5 with ≥ 2 cross-checks;
+  - **insufficient** if no model applies or there is no price;
+  - withheld (uncertain) when share counts in the filings disagree by more than 25 %.
+
+### 1.5 Scenarios
+Each scenario reruns every model:
+- growth −3 pts;
+- discount rates +1 pt;
+- margin −3 pts;
+- sector multiples −20 %;
+- debt +25 %;
+- earnings −15 %;
+- terminal growth −1 pt.
+
+The results are sorted by effect on the primary value, and a change in classification is flagged.
+
+---
+
+## 2. Market behaviour (`lib/quant.js`)
+All series are daily bars in the **listing currency**. Market comparisons use the local index joined on the UTC calendar date: S&P 500 (SPY) for US listings, otherwise Nikkei 225, FTSE 100, DAX, CAC 40, AEX, SMI, OMXC25, IBEX, BEL 20, OBX, TAIEX, NIFTY 50, Hang Seng, KOSPI, ASX 200 or TSX.
+
+| Measure | Formula |
+|---|---|
+| Returns | P_t / P_{t−n} − 1 for n = 1, 5, 21, 63, 126, 252; total return uses an index with dividends reinvested on the ex-date |
+| Moving averages | SMA 20/50/200; price above or below; 50-day slope over 21 days |
+| 12−1 momentum | P_{t−21} / P_{t−252} − 1 |
+| Relative strength | 63-day return − index 63-day return (common dates); minus sector-peer median |
+| Trend persistence | R² and slope of log price on time (63 days); share of up days |
+| Acceleration | r₆₃(t) − r₆₃(t−21) |
+| Volume confirmation | mean volume on up days ÷ on down days (42 days) |
+| Exhaustion | distance from SMA50 in units of σ·√50; 21-day return percentile in own history; σ₂₀/σ₁₂₀; RSI(14) and RSI divergence; **relative-strength divergence** (3-month price high or low not confirmed by the price ÷ index ratio within 3 %); volume z-score of log volume (60 days); momentum fading; valuation premium > 40 %. Listed as signals, never as a reversal prediction. |
+| Volatility | close-to-close σ (20, 60, 252 days, all; ×√252); Parkinson σ = √(mean ln²(H/L) / (4 ln 2) · 252); EWMA (λ = 0.94); clustering = autocorrelation of r², lags 1–5; drawdowns; 1-day historical VaR and ES at 95 % (1 year); skew and kurtosis |
+| Regime-dependent σ | stock σ when the index is above or below its 200-day average, and when the index's 20-day σ (measured to the previous day) is above or below its median |
+| β | OLS on daily log returns, common consecutive dates, 2 years; ± one standard error |
+| Liquidity | median daily volume and traded value (1 month, US$); turnover = volume ÷ shares; Amihud = mean \|r\| / traded value × 10⁹ |
+| Spread estimate | Abdi–Ranaldo 2017: per two-day pair √max(0, 4·(c_t − η_t)(c_t − η_{t+1})), averaged (η = log mid-range). An estimate; no quoted spreads in the free feeds |
+| Trading cost | half-spread + σ_daily·√(order ÷ daily value) (square-root impact, k = 1); cost curve for $10 k to $10 M; above 10 % of daily value flagged as not fillable in a day. **Theoretical**: real fills depend on the book, time and venue. |
+
+## 3. Fundamentals (`lib/fundamentals.js`)
+- **Sources:** SEC XBRL company facts.
+  - US: us-gaap 10-K/10-Q.
+  - International: ifrs-full or us-gaap in 20-F/40-F.
+  - The reporting currency is the unit with the most annual facts; convenience translations are ignored.
+- **Point in time:** `asOf(cf, t)` keeps only facts filed on or before *t*. `restatements(cf)` counts annual values revised by later filings.
+- **Ratios:**
+  - Growth: revenue CAGR over 1, 3 and 5 years.
+  - Margins: gross, operating, net.
+  - Cash flow: FCF = OCF − capex; FCF margin and conversion.
+  - Earnings quality: Sloan accruals = (NI − OCF) ÷ average assets.
+  - Returns: ROIC = EBIT·(1−t) ÷ (equity + debt − cash); ROE.
+  - Balance sheet: current ratio, debt ÷ EBITDA, debt ÷ equity, interest cover.
+  - Dilution: share-count CAGR over 3 years; SBC ÷ revenue.
+  - Payout: dividends ÷ FCF and ÷ NI.
+  - Piotroski F-score: 9 tests, needs ≥ 7 evaluable.
+- **Deterioration flags:**
+  - revenue down;
+  - operating margin down > 2 pts;
+  - negative FCF;
+  - accruals > 8 %;
+  - interest cover < 3×;
+  - dilution > 2 % a year;
+  - dividends > FCF;
+  - current ratio < 0.8.
+
+## 4. Market regime (`lib/regime.js`)
+- **Trend:** indicators vote bull / bear / sideways:
+  - index vs 200-day average (±3 %);
+  - 50-day slope (±1 %);
+  - drawdown from the 52-week high (< 5 % / > 20 %);
+  - 6-month return (±5 %);
+  - breadth, the share of tracked stocks above SMA50 (> 60 % / < 40 %, only with ≥ 10 stocks).
+- **Uncertainty:** the majority's share of the votes (≥ 80 % low, ≥ 60 % moderate, otherwise high).
+- **Volatility regime:** mean of the 20-day realised-σ percentile and (US) the VIX percentile within 5 years: high > 75th, low < 25th.
+- **Liquidity stress:** count of three signals (VIX > 85th percentile, median Amihud up > 1.5× in 3 months, realised σ > 90th percentile).
+- **Sector rotation:** Spearman correlation of sector median returns, last 3 months vs the 3 before.
+- One regime is computed per local index.
+- Thresholds are judgement, and regimes are clear only in hindsight.
+
+## 5. Signal calibration (`lib/calibrate.js`)
+- **Formation:** each quarter-end.
+- **Test:** rank correlation (IC) between a signal and the next 3-month total return across the US universe. The signals are earnings yield (EPS as known at that date) and 12−1 momentum.
+- **Reported:** mean IC, t-statistic, hit rate, and earlier vs later halves.
+- **Caveats:** survivorship bias (today's universe) and small samples. Part 05 replaces this with full walk-forward validation.

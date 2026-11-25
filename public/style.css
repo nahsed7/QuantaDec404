@@ -208,3 +208,5 @@ details.hist summary{cursor:pointer;padding:6px 0}
 .cp-models summary{cursor:pointer;font-family:var(--mono);font-size:12px}
 details summary{cursor:pointer}
 @media (max-width:600px){.cp-scores{grid-template-columns:1fr}}
+/* Model confidence levels (valuation tab) */
+.conf-high{color:var(--buy)}.conf-medium{color:var(--warn)}.conf-low{color:var(--sell)}

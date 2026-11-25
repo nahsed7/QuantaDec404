@@ -5,9 +5,10 @@ Repository: github.com/nahsed7/QuantaDec404 (MIT). The full nine-part brief is i
 **Status, 2026-11-25:**
 - **Part 01 has been redone from scratch at the user's request**, as a fresh audit of the current code (§2).
 - Parts 02–09 will be implemented one at a time, each with tests, a spec update and its own commit.
-- **Part 02 (heat map) is done** (§11): reviewed against the brief, reworked, extended with an international universe, and tested.
-- Parts 03–04 still run on their first-pass code (§10) until they are re-sent.
-- Live trading is disabled. **Waiting for Part 03.**
+- **Part 02 (heat map) is done** (§11). **Part 03 (valuation and quantitative engines) is done** (§12).
+- The user then sent Parts 04–09 together and added a Part 10 (intuitive visualisation, plus cutting the live-chart delay to 0.1 s or less). They asked for all ten to be completed in order, with the best free choices made automatically and API keys requested once at the end.
+- Order agreed: 03 → 05 → 04 → 06 → 07 → 08 → 09 → 10. Validation comes before the decision-weight rework, so weights can be capped by evidence.
+- Live trading is disabled.
 
 ---
 
@@ -81,11 +82,11 @@ It runs on an Android phone (Termux, proot Ubuntu, aarch64). It is viewed in a b
 ### 2.6 Findings: things that work but are not correct enough
 These were found by reading the code and checking the live data. They are weaknesses, not cosmetic issues.
 
-1. **Fundamentals are not point-in-time.**
+1. **Fundamentals are not point-in-time** (*fixed in Part 03*: `F.asOf()`; point-in-time valuation history and calibration).
    - `fundamentals.annual()` keeps the *latest* filing for each fiscal year (`filed > cur[1]`), so restated numbers replace what was originally reported.
    - Any historical test built on this has look-ahead bias, or at best runs late.
    - **Critical for Part 05.** Fix: keep every filed version and select "as known on date t".
-2. **Price returns ignore dividends.** Calibration uses close-to-close returns, so high-yield stocks look worse than they were. Fix: total return from Yahoo dividend events, which are already fetched.
+2. **Price returns ignore dividends** (*fixed in Part 03*: total-return index). Calibration uses close-to-close returns, so high-yield stocks look worse than they were. Fix: total return from Yahoo dividend events, which are already fetched.
 3. **Survivorship bias.**
    - The universe is today's 54 large caps; companies that left the index or were delisted are absent.
    - Free price data for delisted stocks is not available from Yahoo.
@@ -101,8 +102,8 @@ These were found by reading the code and checking the live data. They are weakne
    - The live calibration shows the earnings-yield signal had *negative* rank-IC (−0.056, t = −1.19, 35 quarters) in this universe.
    - The design should let the validation results (Part 05) set or cap how much each component counts.
 7. **The "out-of-sample validation" input to confidence is not out-of-sample.** It is the later half of the same calibration sample, with no held-out test and no protection against choosing models after seeing the data.
-8. **Fixed assumptions.** The equity risk premium is a constant 5%. The CAPM beta uses a Blume adjustment. Both are reasonable, but they apply to all stocks and only the browser can override them.
-9. **Liquidity cost model** (half-spread + σ√(Q/ADV), k = 1). The spread is estimated from daily bars, not quotes; this is never labelled in the UI.
+8. **Fixed assumptions** (*Part 03*: β, ERP and the risk-free rate are now editable and re-derive the discount rates; the tax fallback is the statutory rate per country). The equity risk premium is a constant 5%. The CAPM beta uses a Blume adjustment. Both are reasonable, but they apply to all stocks and only the browser can override them.
+9. **Liquidity cost model** (*Part 03*: the spread estimator was 2× too high, now fixed; a cost curve is labelled theoretical) (half-spread + σ√(Q/ADV), k = 1). The spread is estimated from daily bars, not quotes; this is never labelled in the UI.
 10. **Paper trading realism.** Fills at the displayed bid or ask, with no fees, financing, slippage, partial fills or rejections.
 11. **No access control.** The server listens on `0.0.0.0` without authentication, so anyone on the hotspot can change the paper account. This must be fixed before Part 07.
 12. **Two copies of the code** (*done in Part 02*: the live server now runs from the clone, with data copied; `/root/market-site` is kept as a backup). The live server runs from `/root/market-site`. The working clone is `/data/data/com.termux/files/home/QuantaDec404`. Decision: **the clone is canonical**; the server will be moved to run from it.
@@ -187,6 +188,9 @@ None of the free sources permit commercial redistribution. This is a private res
 | 2026-11-25 | Part 02: international universe from SEC 20-F/40-F filers on home listings; analysis in the reporting currency; US$ for sizes; local yields from FRED's keyless CSV. |
 | 2026-11-25 | Data-integrity guards withhold a valuation classification when share counts disagree. DCF net investment floored at zero. |
 | 2026-11-25 | The live server runs from the canonical clone. |
+| 2026-11-25 | Part 03: years 1–5 growth = terminal + 50 % of (historical − terminal); WACC floor = risk-free + 2 pts; statutory tax fallback. |
+| 2026-11-25 | Part 03: market statistics in the listing currency against the local index (16 indices); valuation in the reporting currency. |
+| 2026-11-25 | Answers to the open questions, chosen automatically at the user's request: fixed documented weights capped by validation; a stock paper book inside the existing account file; a one-time token for writes; compact tick data older than 30 days. |
 
 ## 8. Questions to the user: answers and decisions
 The user answered "go international and keep the 54 too", agreed to create API keys, and asked for the best free choice wherever a decision was open.
@@ -291,4 +295,65 @@ Gaps found and closed:
 - **Price-only companies:** no market cap, since there is no share count, so they are drawn at the smallest size with the "size unavailable" corner.
 - **Quotes:** delayed (Yahoo, about 15 min), refreshed every 60 s while viewed. They are not live, and the map says so.
 - **Sector peers** for comparables now include international companies. That is broader, but mixes accounting standards (IFRS vs US GAAP).
+
+## 12. Part 03: valuation and quantitative engines (done, 2026-11-25)
+The formulas, inputs, assumptions and limitations of every module are in **`docs/MODELS.md`**.
+
+### 12.1 Review against the brief, and what changed
+| Brief item | First pass | Now |
+|---|---|---|
+| 6 models, independently inspectable | yes | unchanged; every model card is expandable |
+| Conservative / base / optimistic, range | yes | unchanged |
+| Sensitivity to assumptions | DCF only | **every model** (`V.sensitivity`), shown as a table per model |
+| Model limitations | yes | unchanged |
+| Data freshness | page-level only | **per model**: filing date and age, price time, and which data it uses |
+| Confidence and uncertainty | synthesis-level only | **per model**: `high` / `medium` / `low` with stated reasons |
+| No blind averaging; expose disagreement | primary + agreement % | plus a **disagreement table**: each model vs the primary range, % difference, range overlap |
+| User-editable inputs | growth, margin, discount, terminal, EPS, capex, debt, cash | plus **β, ERP, risk-free rate**, which re-derive cost of equity and WACC |
+| Scenarios | 7 named scenarios | unchanged (sorted by effect; classification change flagged) |
+| Momentum: relative strength | vs SPY by bar count; US only | **vs local index on common dates** (16 indices); international stocks now included |
+| Exhaustion: relative-strength divergence | RSI divergence only | plus price ÷ index divergence |
+| Volatility: regime-dependent | index above/below its 200-day average (US only) | plus calm vs turbulent index (20-day σ vs median, no look-ahead); all markets |
+| Liquidity: costs and slippage | single estimate; **spread 2× too high** | estimator fixed (per-pair floor, ×2 bug removed); **cost curve** $10 k–$10 M with a not-fillable-in-a-day flag; labelled theoretical |
+| Fundamentals | full list | ROIC tax fallback = statutory rate; IFRS revenue and EPS tags added (Novartis, Sanofi, Shell) |
+| Regime: multiple indicators, uncertainty | US only | plus **one regime per local index** |
+| Valuation history | restated data (look-ahead) | **point-in-time**: filings public on each annual report's filing date, priced that month |
+| Calibration | price returns; restated EPS | **total returns**; EPS versions used only after their filing date |
+
+### 12.2 Changes to defaults (rationale in `docs/MODELS.md` §1.1)
+- **Growth:** the median of the 1-, 3- and 5-year revenue CAGRs, shrunk halfway toward terminal growth, clamped to [−5 %, 15 %], range ±4 pts.
+  - Effect: TSMC 20 % → 12.3 %, Honda 14 % → 5 %.
+- **WACC:** floored at risk-free + 2 pts. Honda's 4.4 % becomes 4.8 %, flagged in the assumptions.
+- **Tax fallback:** the country statutory rate (OECD 2024) instead of US 21 %.
+
+### 12.3 Verified on the live data (2026-11-25)
+- 98/98 companies, no errors.
+- International β against local indices, e.g. TSMC 1.09 ± 0.02 vs TAIEX, Shell 0.50 ± 0.08 vs FTSE 100.
+- 4–10 point-in-time valuation-history points per company.
+- 16 local regimes.
+- Calibration (US, total returns, point-in-time EPS, 35 quarters):
+  - earnings-yield IC −0.034 (t −0.79);
+  - 12−1 momentum IC +0.035 (t +0.74);
+  - neither significant.
+- Build: about 60 s with a full SEC re-download, about 17 s with a warm cache. Heap about 80 MB after GC, RSS about 320 MB.
+
+### 12.4 Files
+- **New:** `docs/MODELS.md`, `test/engines.test.js`.
+- **Changed:** `lib/valuation.js`, `lib/quant.js`, `lib/stats.js` (slope standard error), `lib/fundamentals.js` (`asOf`, `restatements`, tags, tax fallback), `lib/calibrate.js`, `src/research.js`, `public/heat.js`, `public/style.css`.
+
+### 12.5 Tests
+- **58 pass:** 41 earlier, plus 17 in `test/engines.test.js`. They cover:
+  - growth shrinkage, the WACC floor, the tax fallback, consistent re-derivation;
+  - sensitivity, freshness and confidence for every model; sensitivity directions; confidence levels; disagreement positions;
+  - `asOf` hiding later restatements; restatement counting; calibration not leaking future EPS versions;
+  - date alignment; β recovery with its standard error; the total-return index;
+  - the spread estimator on a known 1 % bounce; the cost curve; relative-strength divergence.
+- **UI harness:** 0 errors (all colour, size, grouping and region combinations; 11 company panels × 6 tabs; comparison).
+
+### 12.6 Known limitations (Part 03)
+- **Captive-finance groups (Honda, Toyota):** consolidated FCFF mixes a lending business funded by debt. The DCF is misspecified (Honda about 4× its price), and every Honda model is rated low confidence with the classification "uncertain".
+- **SMFG:** ROE from XBRL (2.9 %) looks implausibly low and the share counts conflict, so it is flagged and withheld.
+- **BP:** no EPS or share counts in its XBRL at all, so it remains "insufficient".
+- **β and ERP in valuation history** are today's values. No free point-in-time β exists.
+- **Spread estimates** come from daily bars, not quotes: about 0.8 % against a true 1 % on synthetic data.
 

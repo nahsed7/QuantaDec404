@@ -58,6 +58,10 @@ const FINANCIAL = new Set(['JPM', 'BAC', 'WFC', 'GS', 'MS', 'BRK-B', 'HSBA.L', '
 // TWD, CNY and HKD have no free series here: those valuations fall back to the US Treasury yield, with a visible note.
 const LOCAL_RF = { JPY: 'IRLTLT01JPM156N', EUR: 'IRLTLT01DEM156N', GBP: 'IRLTLT01GBM156N', CHF: 'IRLTLT01CHM156N', DKK: 'IRLTLT01DKM156N',
   AUD: 'IRLTLT01AUM156N', CAD: 'IRLTLT01CAM156N', NOK: 'IRLTLT01NOM156N', SEK: 'IRLTLT01SEM156N', KRW: 'IRLTLT01KRM156N', INR: 'INDIRLTLT01STM' };
+// Local benchmark index per exchange suffix (Yahoo symbols, each verified to return 5 years of daily bars on 2026-11-25).
+const INDEX = { '.T': ['^N225', 'Nikkei 225'], '.L': ['^FTSE', 'FTSE 100'], '.DE': ['^GDAXI', 'DAX'], '.PA': ['^FCHI', 'CAC 40'], '.AS': ['^AEX', 'AEX'],
+  '.SW': ['^SSMI', 'SMI'], '.CO': ['^OMXC25', 'OMX Copenhagen 25'], '.MC': ['^IBEX', 'IBEX 35'], '.BR': ['^BFX', 'BEL 20'], '.OL': ['OBX.OL', 'OBX'],
+  '.TW': ['^TWII', 'TAIEX'], '.NS': ['^NSEI', 'NIFTY 50'], '.HK': ['^HSI', 'Hang Seng'], '.KS': ['^KS11', 'KOSPI'], '.AX': ['^AXJO', 'S&P/ASX 200'], '.TO': ['^GSPTSE', 'S&P/TSX Composite'] };
 // Berkshire reports per-share figures per Class A share; one A share = 1500 B shares.
 const CLASS_FACTOR = { 'BRK-B': 1500 };
 
@@ -81,9 +85,9 @@ function create({ dataDir, quotes }) {
   const st = { started: Date.now(), loaded: 0, errors: {}, building: false, builtAt: null, dossiers: new Map(), regime: null, calibration: null, rf: null, market: null, vix: null };
 
   // ---- disk cache with TTL ----
-  async function cachedFile(name, ttl, fetcher) {
+  async function cachedFile(name, ttl, fetcher, valid = () => true) {
     const f = path.join(dir, name);
-    try { const s = fs.statSync(f); if (Date.now() - s.mtimeMs < ttl) return JSON.parse(fs.readFileSync(f, 'utf8')); } catch {}
+    try { const s = fs.statSync(f); if (Date.now() - s.mtimeMs < ttl) { const v = JSON.parse(fs.readFileSync(f, 'utf8')); if (valid(v)) return v; } } catch {}
     try { const v = await fetcher(); fs.writeFileSync(f + '.tmp', JSON.stringify(v)); fs.renameSync(f + '.tmp', f); return v; }
     catch (e) { try { const old = JSON.parse(fs.readFileSync(f, 'utf8')); old._stale = String(e.message); return old; } catch { throw e; } }   // fall back to stale cache
   }
@@ -104,7 +108,9 @@ function create({ dataDir, quotes }) {
   let secNext = 0;
   async function secGet(url) { const wait = secNext - Date.now(); secNext = Math.max(Date.now(), secNext) + 150; if (wait > 0) await new Promise(r => setTimeout(r, wait)); return getJSON(url, SEC_UA); }
 
-  const facts = (sym, cik) => cachedFile(`facts-${sym}.json`, 7 * DAY, async () => ({ fetched: Date.now(), ...F.compact(await secGet(`https://data.sec.gov/api/xbrl/companyfacts/CIK${String(cik).padStart(10, '0')}.json`)) }));
+  // Bump FACTS_VERSION when the tag list changes so cached company facts are re-extracted.
+  const FACTS_VERSION = 3;
+  const facts = (sym, cik) => cachedFile(`facts-${sym}.json`, 7 * DAY, async () => ({ fetched: Date.now(), version: FACTS_VERSION, ...F.compact(await secGet(`https://data.sec.gov/api/xbrl/companyfacts/CIK${String(cik).padStart(10, '0')}.json`)) }), v => v.version === FACTS_VERSION);
   const parseChart = parseYahooChart;
   const yahoo = (sym, iv, range, ttl) => cachedFile(`px-${sym.replace(/[^A-Z0-9-]/gi, '_')}-${iv}.json`, ttl, async () =>
     parseChart(await getJSON(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=${iv}&range=${range}&events=div%2Csplit`, YH_UA)));
@@ -156,12 +162,6 @@ function create({ dataDir, quotes }) {
     return { ...u, cf, daily, monthly };
   }
   const EMPTY_CF = { facts: {}, currency: null };
-  // A live quote arrives in the listing's quoted unit (e.g. GBp); express it in the analysis (reporting) currency.
-  function convQuote(q, ccy) {
-    if (!q || !S.fin(q.price)) return null;
-    const { ccy: qc, factor } = X.normaliseCurrency(q.currency || 'USD'), k = X.cross(qc, ccy, Date.now(), st.fx);
-    return S.fin(k) ? { ...q, price: q.price * factor * k, nativePrice: q.price, nativeCurrency: q.currency } : null;
-  }
   // Risk-free rate in the analysis currency: US Treasury for USD, OECD 10-year yield otherwise, US fallback with a note.
   function rfFor(ccy, t = Date.now()) {
     if (ccy === 'USD' || !ccy) return { value: st.rf, source: st.rfSource?.source || 'U.S. Treasury', date: st.rfSource?.date, label: '10-year US Treasury', fallback: false };
@@ -170,28 +170,37 @@ function create({ dataDir, quotes }) {
     return { value: st.rf, source: st.rfSource?.source || 'U.S. Treasury', date: st.rfSource?.date, label: '10-year US Treasury (no free ' + ccy + ' yield)', fallback: true };
   }
 
-  // First pass: per-company facts and market statistics that do not depend on peers.
-  function prepare(raw, live) {
-    const { sym, sector, label, region, country } = raw, cf = raw.cf || EMPTY_CF, cls = CLASS_FACTOR[sym] || 1;
-    // Analysis currency = the currency of the financial statements, so per-share values and prices are comparable.
-    const listCcy = raw.daily.currency || 'USD', ccy = raw.cf ? (cf.currency || 'USD') : listCcy, ccyNotes = [];
-    let daily = raw.daily, monthly = raw.monthly;
-    if (listCcy !== ccy) {
-      const conv = d => ({ ...d, bars: X.convertBars(d.bars, listCcy, ccy, st.fx), div: X.convertEvents(d.div, listCcy, ccy, st.fx) });
-      daily = conv(daily); monthly = conv(monthly);
-      if (!daily.bars.length) throw new Error(`no ${listCcy}→${ccy} FX rates to convert prices`);
-      ccyNotes.push(`Listed in ${listCcy}, reports in ${ccy}. Prices are converted to ${ccy} at each day's Yahoo FX rate, so returns and volatility include currency moves.`);
-    }
-    if (raw.daily.quotedIn && raw.daily.quotedIn !== listCcy) ccyNotes.push(`Yahoo quotes this listing in ${raw.daily.quotedIn}; converted to ${listCcy}.`);
-    const splits = daily.splits.concat(monthly.splits.filter(s => !daily.splits.some(d => Math.abs(d.t - s.t) < 5 * DAY)));
-    const { rows, tagsUsed } = F.annual(cf), bal = F.latest(cf), notes = [];
-    // Some filers tag share counts in millions or thousands, and Berkshire in Class A equivalents. Rescale against the cover-page count.
-    const units = x => { if (!(x > 0)) return x; if (cls > 1 && x < 1e7) return x * cls; if (x >= 1e6 || cls > 1) return x;
-      const ref = bal.sharesOut; if (ref > 1e6) { const k = [1e3, 1e6].sort((a, b) => Math.abs(Math.log(x * a / ref)) - Math.abs(Math.log(x * b / ref)))[0]; notes.push(`Share counts rescaled ×${k} (filed in ${k === 1e6 ? 'millions' : 'thousands'}).`); return x * k; } return x * 1e6; };
-    for (const r of rows) {                                       // per-share figures on today's share basis
+  // Per-share figures on today's share basis: EPS ÷ later splits (÷ class factor), share counts rescaled and × later splits.
+  function normaliseRows(rows, splits, cls, units) {
+    for (const r of rows) {
       if (S.fin(r.eps)) r.eps = r.eps / splitFactor(splits, r.end, r._f?.eps ?? 0) / cls;
       if (S.fin(r.dilShares)) r.dilShares = units(r.dilShares) * splitFactor(splits, r.end, r._f?.dilShares ?? 0);
     }
+    return rows;
+  }
+  // Some filers tag share counts in millions or thousands, and Berkshire in Class A equivalents. Rescale against the cover-page count.
+  const unitsFor = (cls, ref, notes) => x => { if (!(x > 0)) return x; if (cls > 1 && x < 1e7) return x * cls; if (x >= 1e6 || cls > 1) return x;
+    if (ref > 1e6) { const k = [1e3, 1e6].sort((a, b) => Math.abs(Math.log(x * a / ref)) - Math.abs(Math.log(x * b / ref)))[0]; notes?.push(`Share counts rescaled ×${k} (filed in ${k === 1e6 ? 'millions' : 'thousands'}).`); return x * k; } return x * 1e6; };
+
+  // First pass: per-company facts and market statistics that do not depend on peers.
+  // Two currencies per company:
+  //  - market statistics (returns, volatility, beta, liquidity) use the listing's own currency, so they are free of FX noise
+  //    and comparable with the local index;
+  //  - valuation uses the reporting currency of the financial statements; the price is converted at today's FX rate,
+  //    and historical prices at each month-end's rate.
+  function prepare(raw, live) {
+    const { sym, sector, label, region, country } = raw, cf = raw.cf || EMPTY_CF, cls = CLASS_FACTOR[sym] || 1;
+    const listCcy = raw.daily.currency || 'USD', ccy = raw.cf ? (cf.currency || 'USD') : listCcy, ccyNotes = [];
+    const daily = raw.daily, kNow = X.cross(listCcy, ccy, Date.now(), st.fx);
+    if (!S.fin(kNow)) throw new Error(`no ${listCcy}→${ccy} FX rate`);
+    const monthlyRep = listCcy === ccy ? raw.monthly.bars : X.convertBars(raw.monthly.bars, listCcy, ccy, st.fx);
+    const divRep = listCcy === ccy ? daily.div : X.convertEvents(daily.div, listCcy, ccy, st.fx);
+    const mDivRep = listCcy === ccy ? raw.monthly.div : X.convertEvents(raw.monthly.div, listCcy, ccy, st.fx);
+    if (listCcy !== ccy) ccyNotes.push(`Listed in ${listCcy}, reports in ${ccy}. Returns, volatility and liquidity use ${listCcy} prices; valuation converts the price to ${ccy} at Yahoo FX rates.`);
+    if (daily.quotedIn && daily.quotedIn !== listCcy) ccyNotes.push(`Yahoo quotes this listing in ${daily.quotedIn}; converted to ${listCcy}.`);
+    const splits = daily.splits.concat(raw.monthly.splits.filter(s => !daily.splits.some(d => Math.abs(d.t - s.t) < 5 * DAY)));
+    const { rows: rows0, tagsUsed } = F.annual(cf), bal = F.latest(cf), notes = [];
+    const units = unitsFor(cls, bal.sharesOut, notes), rows = normaliseRows(rows0, splits, cls, units);
     if (S.fin(bal.dilShares)) bal.dilShares = units(bal.dilShares) * splitFactor(splits, bal.asOf.dilShares, Date.parse(bal.asOf.dilShares) + 45 * DAY);   // 10-Q filed ~45 days after quarter end
     if (raw.cf && !S.fin(bal.dilShares) && !S.fin(rows.at(-1)?.dilShares) && !(bal.sharesOut > 0)) notes.push('No total share count in SEC XBRL (reported only by share class), so per-share values and market cap are unavailable.');
     const qEPS = F.quarterlyEPS(cf).map(q => ({ ...q, eps: q.eps / splitFactor(splits, q.end, q.filed) / cls }));
@@ -207,14 +216,14 @@ function create({ dataDir, quotes }) {
     }
     const shares = pick?.[0] ?? null;
     if (pick && pick === cover && !sharesConflict) notes.push('Share count from the filing cover page (shares outstanding, not diluted).');
-    // Price: live quote when available, otherwise the last daily close.
-    const q = convQuote(live?.get(sym), ccy), bars = mergeQuote(daily.bars, q);
-    const price = bars.length ? bars[bars.length - 1].c : null;
-    const yr = Date.now() - 365 * DAY, dps = S.sum(daily.div.filter(d => d.t > yr).map(d => d.amount)) || null;
-    const byYear = {}; for (const d of monthly.div.length ? monthly.div : daily.div) { const y = new Date(d.t).getUTCFullYear(); byYear[y] = (byYear[y] || 0) + d.amount; }
+    // Price: live quote when available, otherwise the last daily close. Bars stay in the listing currency.
+    const q = nativeQuote(live?.get(sym), listCcy), bars = mergeQuote(daily.bars, q);
+    const nativePrice = bars.length ? bars[bars.length - 1].c : null, price = S.fin(nativePrice) ? nativePrice * kNow : null;
+    const yr = Date.now() - 365 * DAY, dps = S.sum(divRep.filter(d => d.t > yr).map(d => d.amount)) || null;
+    const byYear = {}; for (const d of mDivRep.length ? mDivRep : divRep) { const y = new Date(d.t).getUTCFullYear(); byYear[y] = (byYear[y] || 0) + d.amount; }
     const cy = new Date().getUTCFullYear(), dpsGrowth5 = byYear[cy - 1] && byYear[cy - 6] ? S.cagr(byYear[cy - 6], byYear[cy - 1], 5) : null;
-    // Own valuation history: P/E at each fiscal-year end from the month-end close.
-    const mAt = t => { let best = null; for (const b of monthly.bars) if (b.t <= t + 20 * DAY) best = b; return best?.c ?? null; };
+    // Own valuation history: P/E at each fiscal-year end from the month-end close (reporting currency).
+    const mAt = t => { let best = null; for (const b of monthlyRep) if (b.t <= t + 20 * DAY) best = b; return best?.c ?? null; };
     const history = rows.filter(r => S.fin(r.eps)).map(r => { const p = mAt(Date.parse(r.end)); return { end: r.end, price: p, eps: r.eps, pe: S.fin(p) && r.eps > 0 ? p / r.eps : null,
       pfcf: S.fin(p) && r.fcf > 0 && r.dilShares > 0 ? p / (r.fcf / r.dilShares) : null }; });
     const lastQ = qEPS[qEPS.length - 1], prevQ = lastQ && qEPS.find(x => Math.abs(Date.parse(lastQ.end) - Date.parse(x.end) - 365 * DAY) < 20 * DAY);
@@ -222,19 +231,36 @@ function create({ dataDir, quotes }) {
     const L = rows.at(-1) || {};
     const need = ['revenue', 'opIncome', 'netIncome', 'eps', 'ocf', 'capex', 'assets', 'liabilities', 'equity', 'cash', 'dilShares'];
     const present = need.filter(k => S.fin(L[k])).length + (daily.bars.length >= 252 ? 1 : 0) + (S.fin(shares) ? 1 : 0) + (S.fin(price) ? 1 : 0);
+    const missing = need.filter(k => !S.fin(L[k]));
     if (!raw.cf) notes.push('No free source of financial statements (not an SEC filer). Price-based measures only; no valuation, fundamentals or valuation-based scores.');
-    const fxUSD = X.usdPer(ccy, Date.now(), st.fx), marketCap = S.fin(price) && S.fin(shares) ? price * shares : null;
+    const rs = raw.cf ? F.restatements(cf) : null;
+    if (rs?.revised) notes.push(`${rs.revised} of ${rs.compared} annual revenue, profit or EPS values were later restated. Current figures use the latest filings; valuation history uses values as first reported.`);
+    const fxUSD = X.usdPer(ccy, Date.now(), st.fx), fxListUSD = X.usdPer(listCcy, Date.now(), st.fx), marketCap = S.fin(price) && S.fin(shares) ? price * shares : null;
     if (ccy !== 'USD' && !S.fin(fxUSD)) notes.push(`No ${ccy}/USD rate: US-dollar sizes unavailable.`);
-    const usListed = listCcy === 'USD' && ccy === 'USD' && /^[A-Z-]+$/.test(sym);
-    return { sharesConflict,  sym, sector, label: label || sym, region: region || 'US', country: country || 'US', ccy, listing: { ccy: listCcy, quotedIn: raw.daily.quotedIn || listCcy }, usListed, fxUSD,
-      name: cf.name || label || sym, isFinancial: FINANCIAL.has(sym), hasFilings: !!raw.cf, rows, tagsUsed, bal, qEPS, shares, price, bars, monthly: monthly.bars, div: daily.div, splits,
-      dps, dpsGrowth5, history, epsYoY, dataNotes: [...new Set([...ccyNotes, ...notes])], completeness: present / (need.length + 3),
+    const usListed = listCcy === 'USD' && /^[A-Z-]+$/.test(sym), index = indexFor(sym, usListed);
+    return { sharesConflict, sym, sector, label: label || sym, region: region || 'US', country: country || 'US', ccy, listing: { ccy: listCcy, quotedIn: daily.quotedIn || listCcy }, usListed, index,
+      fxUSD, fxListUSD, kNow, name: cf.name || label || sym, isFinancial: FINANCIAL.has(sym), hasFilings: !!raw.cf, rows, tagsUsed, bal, qEPS, shares, price, nativePrice, bars,
+      monthly: monthlyRep, monthlyNative: raw.monthly.bars, divNative: daily.div, div: divRep, splits, cls,
+      dps, dpsGrowth5, history, epsYoY, restated: rs, dataNotes: [...new Set([...ccyNotes, ...notes])], completeness: present / (need.length + 3), missingFields: missing,
       marketCap, marketCapUSD: S.fin(marketCap) && S.fin(fxUSD) ? marketCap * fxUSD : null, eps: L.eps ?? null, fcf: L.fcf ?? null,
       fresh: { filed: bal.lastFiled, filingAgeDays: bal.lastFiled ? (Date.now() - Date.parse(bal.lastFiled)) / DAY : null, factsFetched: cf.fetched ?? null, pricesFetched: daily.fetched,
         priceTime: q?.time ?? bars[bars.length - 1]?.t, priceAgeMin: q?.time ? (Date.now() - q.time) / 60e3 : null, priceKind: q ? 'delayed quote (Yahoo; may lag up to ~15 min)' : 'last daily close (historical)',
         stale: [cf._stale, raw.daily._stale, raw.monthly._stale].filter(Boolean) },
-      live: q || null };
+      live: q ? { ...q, price, nativePrice: q.price, nativeCurrency: listCcy } : null };
   }
+  // A live quote in the listing's quoted unit (e.g. GBp) → the listing currency (GBP).
+  function nativeQuote(q, listCcy) {
+    if (!q || !S.fin(q.price)) return null;
+    const { ccy: qc, factor } = X.normaliseCurrency(q.currency || 'USD');
+    if (qc !== listCcy) return null;                    // unexpected currency: ignore the quote rather than mix units
+    return { ...q, price: q.price * factor };
+  }
+  // Local market index for a listing (by exchange suffix); US listings use SPY.
+  function indexFor(sym, usListed) {
+    if (usListed) return { sym: 'SPY', name: 'S&P 500 (SPY)' };
+    const sfx = (sym.match(/\.[A-Z]+$/) || [''])[0]; return INDEX[sfx] ? { sym: INDEX[sfx][0], name: INDEX[sfx][1] } : null;
+  }
+  const marketFor = p => p.index?.sym === 'SPY' ? st.market?.bars : st.indices?.[p.index?.sym]?.bars || null;
 
   // Data-integrity override: a classification against fair value is withheld when the per-share basis is in doubt.
   function guard(syn, p) {
@@ -246,42 +272,63 @@ function create({ dataDir, quotes }) {
     return { sym: p.sym, pe: p.eps > 0 ? p.price / p.eps : null, evEbit: L.opIncome > 0 ? ev / L.opIncome : null, evSales: L.revenue > 0 ? ev / L.revenue : null,
       pb: p.bal.equity > 0 ? p.marketCap / p.bal.equity : null, pfcf: L.fcf > 0 ? p.marketCap / L.fcf : null };
   }
+  // Traded value and Amihud in US dollars so they compare across markets (bars are in the listing currency).
+  function liquidityUSD(p) {
+    const l = Q.liquidity(p.bars, { shares: p.shares });
+    if (p.listing.ccy !== 'USD' && l.available) { const k = p.fxListUSD; l.addvLocal = l.addv; l.addv = S.fin(k) ? l.addv * k : null; l.amihud = S.fin(k) && S.fin(l.amihud) ? l.amihud / k : null; }
+    return l;
+  }
 
   // Second pass: everything that needs the market, peers or regime.
   function analyse(p, all, opts = {}) {
-    // Beta and market-relative measures need bars on the same trading calendar as SPY, so only US listings get them.
-    const marketBars = p.usListed ? st.market?.bars : null, sectorPeers = all.filter(x => x.sector === p.sector), rfi = rfFor(p.ccy);
+    const marketBars = marketFor(p), marketName = p.index?.name || null, sectorPeers = all.filter(x => x.sector === p.sector), rfi = rfFor(p.ccy);
     const sec63 = S.median(sectorPeers.filter(x => x.sym !== p.sym).map(x => Q.returns(x.bars, [63])[63]));
-    const fund = F.analyse(p.rows, p.bal, p.price);
-    const volatility = Q.volatility(p.bars, { marketBars }), momentum = Q.momentum(p.bars, { marketBars, sectorMedian63: sec63 });
-    const liquidity = Q.liquidity(p.bars, { shares: p.shares });
-    if (p.ccy !== 'USD' && liquidity.available) {       // traded value and Amihud in US dollars so they compare across markets
-      const k = p.fxUSD; liquidity.addvLocal = liquidity.addv; liquidity.addv = S.fin(k) ? liquidity.addv * k : null; liquidity.amihud = S.fin(k) && S.fin(liquidity.amihud) ? liquidity.amihud / k : null;
-    }
-    const ctx = { sym: p.sym, sector: p.sector, isFinancial: p.isFinancial, price: p.price, shares: p.shares, rows: p.rows, bal: p.bal, fund, rf: rfi.value, beta: volatility.beta,
-      peers: sectorPeers.map(peerMultiples), history: p.history, dps: p.dps, dpsGrowth5: p.dpsGrowth5, epsTTM: null };
+    const fund = F.analyse(p.rows, p.bal, p.price, V.STATUTORY_TAX[p.country] ?? 0.25);
+    const volatility = Q.volatility(p.bars, { marketBars, marketName }), momentum = Q.momentum(p.bars, { marketBars, marketName, sectorMedian63: sec63, divs: p.divNative });
+    const liquidity = liquidityUSD(p);
+    liquidity.costCurve = Q.costCurve(liquidity);
+    const ctx = { sym: p.sym, sector: p.sector, country: p.country, isFinancial: p.isFinancial, price: p.price, shares: p.shares, rows: p.rows, bal: p.bal, fund, rf: rfi.value, beta: volatility.beta,
+      peers: sectorPeers.map(peerMultiples), history: p.history, dps: p.dps, dpsGrowth5: p.dpsGrowth5, epsTTM: null, fresh: p.fresh, sharesConflict: p.sharesConflict };
     const assumptions = V.defaults(ctx), models = V.runAll(ctx, assumptions), synthesis = guard(V.synthesize(models, p.price, ctx), p);
     const scen = opts.light ? null : V.scenarios(ctx, assumptions);
     const histModel = models.find(m => m.id === 'hist');
-    const exhaustion = Q.exhaustion(p.bars, { marketBars, valuationPremium: synthesis.premium });
+    const exhaustion = Q.exhaustion(p.bars, { marketBars, marketName, valuationPremium: synthesis.premium });
     return { ...p, fund, volatility, momentum, liquidity, exhaustion, rf: rfi.value, rfInfo: rfi, erp: V.ERP,
       valuation: { ctx, assumptions, models, synthesis, scenarios: scen, histPercentile: histModel?.detail?.percentile ?? null } };
   }
 
-  // Point-in-time-ish valuation history: rerun DCF and EPV with the data available at each fiscal-year end.
-  function valuationHistory(d, tnx) {
-    const out = [];
-    for (let i = 3; i < d.rows.length; i++) {
-      const rows = d.rows.slice(0, i + 1), L = rows[i], t = Date.parse(L.end);
-      const price = d.history.find(h => h.end === L.end)?.price;
-      let rf; if (d.ccy === 'USD') { const rfRow = tnx?.filter(b => b.t <= t).pop(); rf = rfRow ? rfRow.c / 100 : st.rf; } else rf = rfFor(d.ccy, t).value;
-      const shares = L.dilShares; if (!S.fin(price) || !(shares > 0)) continue;
+  // Point-in-time valuation history. For each annual report, the DCF, earnings-power and book models are rerun with only
+  // the filings public on the day that report was filed (restated later values are excluded), priced at that month's
+  // close and that month's risk-free rate. β and the equity risk premium are today's (no free point-in-time β).
+  function valuationHistory(d) {
+    const raw = st.raws?.find(r => r.sym === d.sym); if (!raw?.cf) return [];
+    const ends = [...new Set(d.rows.map(r => r._filed).filter(Boolean))].sort((x, y) => x - y), out = [];
+    for (const t of ends) {
+      const cfT = F.asOf(raw.cf, t), notes = [], { rows: r0 } = F.annual(cfT), balT = F.latest(cfT);
+      const rows = normaliseRows(r0, d.splits, d.cls, unitsFor(d.cls, balT.sharesOut, notes)), L = rows.at(-1);
+      if (!L || rows.length < 3) continue;
+      const mb = d.monthly.filter(b => b.t <= t + 31 * DAY).pop(), price = mb?.c, shares = L.dilShares;
+      if (!S.fin(price) || !(shares > 0)) continue;
+      let rf; if (d.ccy === 'USD') { const rfRow = st.tnx?.filter(b => b.t <= t).pop(); rf = rfRow ? rfRow.c / 100 : st.rf; } else rf = rfFor(d.ccy, t).value;
       const bal = { equity: L.equity, debt: L.debt, cash: L.cash, curAssets: L.curAssets, curLiab: L.curLiab, goodwill: L.goodwill, intangibles: L.intangibles };
-      const fund = F.analyse(rows, bal, price), ctx = { ...d.valuation.ctx, price, shares, rows, bal, fund, rf, history: [], peers: [] };
+      const fund = F.analyse(rows, bal, price, V.STATUTORY_TAX[d.country] ?? 0.25), ctx = { ...d.valuation.ctx, price, shares, rows, bal, fund, rf, history: [], peers: [], fresh: null };
       const a = V.defaults(ctx), ms = [V.dcf(ctx, a), V.earnings(ctx, a), V.assets(ctx, a)];
-      out.push({ end: L.end, price, rf, models: ms.filter(m => m.applicable).map(m => ({ id: m.id, low: m.low, base: m.base, high: m.high })) });
+      out.push({ end: L.end, filed: new Date(t).toISOString().slice(0, 10), price, rf, models: ms.filter(m => m.applicable).map(m => ({ id: m.id, low: m.low, base: m.base, high: m.high })) });
     }
     return out;
+  }
+
+  // Annual EPS as each filing reported it (every version), for point-in-time signal tests. Per-share basis = today's.
+  function epsVersions(raw, d) {
+    if (!raw?.cf) return [];
+    const out = [];
+    for (const t of F.TAGS.eps) for (const [start, end, val, form, filed] of raw.cf.facts[t]?.v || []) {
+      if (!/^(10-K|20-F|40-F)/.test(form) || !start) continue; const days = (Date.parse(end) - Date.parse(start)) / DAY; if (days < 330 || days > 380) continue;
+      const f = Date.parse(filed); out.push({ end, filed: f, eps: val / splitFactor(d.splits, end, f) / d.cls, tag: t });
+    }
+    // Keep the highest-priority tag per (end, filed).
+    const best = new Map(); for (const x of out) { const k = x.end + '|' + x.filed, c = best.get(k); if (!c || F.TAGS.eps.indexOf(x.tag) < F.TAGS.eps.indexOf(c.tag)) best.set(k, x); }
+    return [...best.values()].sort((a, b) => a.end.localeCompare(b.end) || a.filed - b.filed);
   }
 
   async function build() {
@@ -291,25 +338,33 @@ function create({ dataDir, quotes }) {
       st.rf = tr.status === 'fulfilled' ? tr.value.latest.y10 : null; st.rfSource = tr.status === 'fulfilled' ? { ...tr.value.latest, source: tr.value.source } : { error: String(tr.reason?.message) };
       if (!S.fin(st.rf) && tnx.status === 'fulfilled') { const b = tnx.value.bars.at(-1); st.rf = b.c / 100; st.rfSource = { date: new Date(b.t).toISOString().slice(0, 10), y10: st.rf, source: 'Yahoo ^TNX (fallback)' }; }
       st.market = spy.status === 'fulfilled' ? spy.value : null; st.vix = vix.status === 'fulfilled' ? vix.value : null; st.tnx = tnx.status === 'fulfilled' ? tnx.value.bars : null;
+      if (!st.market) st.errors['SPY'] = String(spy.reason?.message); else delete st.errors['SPY'];
       const raws = [];
       for (let i = 0; i < UNIVERSE.length; i += 4) {             // 4 companies at a time keeps memory and request rate low
         const res = await Promise.allSettled(UNIVERSE.slice(i, i + 4).map(loadOne));
         res.forEach((r, j) => { const sym = UNIVERSE[i + j].sym; if (r.status === 'fulfilled') { raws.push(r.value); delete st.errors[sym]; } else st.errors[sym] = String(r.reason?.message || r.reason); });
         st.loaded = raws.length;
       }
-      // FX for every listing and reporting currency, and local-currency bond yields for every reporting currency.
+      // FX for every listing and reporting currency, and local-currency bond yields for every currency in use.
       const ccys = [...new Set(raws.flatMap(r => [r.daily.currency, r.cf?.currency]).filter(c => c && c !== 'USD'))];
       const fx = await Promise.allSettled(ccys.map(fxSeries));
       st.fx = {}; st.fxInfo = {};
-      fx.forEach((r, i) => { if (r.status === 'fulfilled' && r.value.series.length) { st.fx[ccys[i]] = r.value.series; st.fxInfo[ccys[i]] = { pair: ccys[i] + 'USD=X', last: r.value.series.at(-1), fetched: r.value.fetched, stale: r.value.stale }; } else st.errors['FX ' + ccys[i]] = String(r.reason?.message || 'no data'); });
+      fx.forEach((r, i) => { if (r.status === 'fulfilled' && r.value.series.length) { st.fx[ccys[i]] = r.value.series; st.fxInfo[ccys[i]] = { pair: ccys[i] + 'USD=X', last: r.value.series.at(-1), fetched: r.value.fetched, stale: r.value.stale }; delete st.errors['FX ' + ccys[i]]; } else st.errors['FX ' + ccys[i]] = String(r.reason?.message || 'no data'); });
       const rc = [...new Set(raws.flatMap(r => [r.cf?.currency, r.daily.currency]).filter(c => c && LOCAL_RF[c]))];
       const yl = await Promise.allSettled(rc.map(c => fred(LOCAL_RF[c])));
       st.localRf = {}; yl.forEach((r, i) => { if (r.status === 'fulfilled') st.localRf[rc[i]] = r.value.rows; else st.errors['Yield ' + rc[i]] = String(r.reason?.message); });
+      // Local market indices for non-US listings (beta, relative strength, regime-dependent volatility, local regimes).
+      const idx = [...new Set(raws.map(r => indexFor(r.sym, (r.daily.currency || 'USD') === 'USD' && /^[A-Z-]+$/.test(r.sym))?.sym).filter(x => x && x !== 'SPY'))];
+      const ir = await Promise.allSettled(idx.map(i => yahoo(i, '1d', '5y', 12 * 3600e3)));
+      st.indices = {}; ir.forEach((r, i) => { if (r.status === 'fulfilled') { st.indices[idx[i]] = r.value; delete st.errors['Index ' + idx[i]]; } else st.errors['Index ' + idx[i]] = String(r.reason?.message); });
       st.raws = raws;
       recompute();
-      // Calibration uses only monthly prices and annual EPS with filing dates (no look-ahead).
-      // US only: one market calendar, one currency and the longest filing histories (international coverage is shorter).
-      st.calibration = C.run([...st.dossiers.values()].filter(d => d.region === 'US').map(d => ({ sym: d.sym, monthly: d.monthly, annual: d.rows.map(r => ({ end: r.end, eps: r.eps, filed: r._f?.eps })) })));
+      // Calibration: US only (one calendar, one currency, longest filing histories). Point-in-time EPS (every filed
+      // version, used only after its filing date) and total returns (dividends reinvested).
+      st.calibration = C.run([...st.dossiers.values()].filter(d => d.region === 'US').map(d => {
+        const tri = Q.totalReturnIndex(d.monthlyNative, d.divNative);
+        return { sym: d.sym, monthly: d.monthlyNative.map((b, i) => ({ t: b.t, c: b.c, tr: tri[i] })), annual: epsVersions(raws.find(r => r.sym === d.sym), d) };
+      }));
       recompute();
       st.builtAt = Date.now();
     } finally { st.building = false; }
@@ -323,29 +378,37 @@ function create({ dataDir, quotes }) {
     const out = new Map();
     for (const p of prepared) { try { out.set(p.sym, analyse(p, prepared)); } catch (e) { st.errors[p.sym] = 'analyse: ' + e.message; } }
     const ds = [...out.values()];
-    const uni = ds.filter(d => d.region === 'US').map(d => ({ sector: d.sector, ret63: d.momentum.returns?.[63], ret63prev: d.bars.length > 126 ? d.bars[d.bars.length - 64].c / d.bars[d.bars.length - 127].c - 1 : null,
+    const uniOf = list => list.map(d => ({ sector: d.sector, ret63: d.momentum.returns?.[63], ret63prev: d.bars.length > 126 ? d.bars[d.bars.length - 64].c / d.bars[d.bars.length - 127].c - 1 : null,
       aboveSMA50: d.momentum.aboveSMA?.[50] ?? null, amihud: d.liquidity.amihud, amihudPrev: Q.liquidity(d.bars.slice(0, -63), { shares: d.shares }).amihud }));
-    st.regime = R.classify(st.market?.bars, st.vix?.bars, uni);
+    st.regime = R.classify(st.market?.bars, st.vix?.bars, uniOf(ds.filter(d => d.region === 'US')));
+    // One regime per local index (no VIX equivalent; breadth only where at least 10 tracked stocks share the index).
+    st.localRegimes = {};
+    for (const [sym, v] of Object.entries(st.indices || {})) {
+      const members = ds.filter(d => d.index?.sym === sym), r = R.classify(v.bars, null, uniOf(members));
+      st.localRegimes[sym] = { ...r, name: members[0]?.index?.name || sym, members: members.map(m => m.sym) };
+    }
     const universe = { mom12_1: ds.map(d => d.momentum.mom12_1).filter(S.fin), rel63: ds.map(d => d.momentum.relSector63).filter(S.fin) };
-    for (const d of ds) d.decision = D.assess(d, { universe, regime: st.regime, calibration: st.calibration });
+    for (const d of ds) d.decision = D.assess(d, { universe, regime: regimeFor(d), calibration: st.calibration });
     st.dossiers = out; st.recomputedAt = st.fullAt = Date.now();
   }
+  const regimeFor = d => d.index?.sym && d.index.sym !== 'SPY' && st.localRegimes?.[d.index.sym]?.available ? st.localRegimes[d.index.sym] : st.regime;
 
   // Cheap refresh between full recomputes: new prices move premiums, classifications, returns and scores, but not the models.
   function refreshPrices() {
     const live = quotes(), ds = [...st.dossiers.values()];
     for (const d of ds) {
-      const q = convQuote(live.get(d.sym), d.ccy); if (!q) continue;
-      const marketBars = d.usListed ? st.market?.bars : null;
-      d.bars = mergeQuote(d.bars, q); d.price = q.price; d.live = q; d.marketCap = S.fin(d.shares) ? q.price * d.shares : null;
+      const q = nativeQuote(live.get(d.sym), d.listing.ccy); if (!q) continue;
+      const marketBars = marketFor(d), marketName = d.index?.name || null;
+      d.bars = mergeQuote(d.bars, q); d.nativePrice = q.price; d.price = q.price * d.kNow; d.live = { ...q, price: d.price, nativePrice: q.price, nativeCurrency: d.listing.ccy };
+      d.marketCap = S.fin(d.shares) ? d.price * d.shares : null;
       d.marketCapUSD = S.fin(d.marketCap) && S.fin(d.fxUSD) ? d.marketCap * d.fxUSD : null;
       d.fresh = { ...d.fresh, priceTime: q.time, priceAgeMin: (Date.now() - q.time) / 60e3, priceKind: 'delayed quote (Yahoo; may lag up to ~15 min)' };
-      d.valuation.ctx.price = q.price; d.valuation.synthesis = guard(V.synthesize(d.valuation.models, q.price, d.valuation.ctx), d);
+      d.valuation.ctx.price = d.price; d.valuation.synthesis = guard(V.synthesize(d.valuation.models, d.price, d.valuation.ctx), d);
       d.momentum = { ...d.momentum, returns: Q.returns(d.bars) };
-      d.exhaustion = Q.exhaustion(d.bars, { marketBars, valuationPremium: d.valuation.synthesis.premium });
+      d.exhaustion = Q.exhaustion(d.bars, { marketBars, marketName, valuationPremium: d.valuation.synthesis.premium });
     }
     const universe = { mom12_1: ds.map(d => d.momentum.mom12_1).filter(S.fin), rel63: ds.map(d => d.momentum.relSector63).filter(S.fin) };
-    for (const d of ds) d.decision = D.assess(d, { universe, regime: st.regime, calibration: st.calibration });
+    for (const d of ds) d.decision = D.assess(d, { universe, regime: regimeFor(d), calibration: st.calibration });
     st.recomputedAt = Date.now();
   }
   // Called every minute while someone is looking: full recompute every 15 minutes, price refresh otherwise.
@@ -355,7 +418,7 @@ function create({ dataDir, quotes }) {
     const v = d.valuation.synthesis, m = d.momentum, x = d.exhaustion, vo = d.volatility, l = d.liquidity, f = d.fund;
     const a = d.valuation.assumptions || {};
     return { sym: d.sym, label: d.label, name: d.name, sector: d.sector, region: d.region, country: d.country, ccy: d.ccy, listing: d.listing, hasFilings: d.hasFilings,
-      price: d.price, nativePrice: d.live?.nativePrice ?? null, isFinancial: d.isFinancial, fxUSD: d.fxUSD, rf: d.rfInfo,
+      price: d.price, nativePrice: d.nativePrice ?? null, index: d.index, isFinancial: d.isFinancial, fxUSD: d.fxUSD, rf: d.rfInfo,
       change1d: d.live?.change != null ? d.live.change / 100 : m.returns?.[1] ?? null, ret: m.returns || {}, marketCap: d.marketCap, marketCapUSD: d.ccy === 'USD' ? d.marketCap : d.marketCapUSD, addv: l.addv, advShares: l.advShares,
       turnover: l.turnover, amihud: l.amihud, hv20: vo.hv20, hv252: vo.hv252, volumeZ: x.volumeZ ?? null, divYield: d.dps && d.price ? d.dps / d.price : null,
       fscore: f.fscore, debtToEbitda: f.debtToEbitda, interestCover: f.interestCover, flags: f.flags, epsYoY: d.epsYoY,
@@ -378,9 +441,9 @@ function create({ dataDir, quotes }) {
     const thin = b => b.map(x => [x.t, +x.c.toPrecision(6), x.v, +x.h.toPrecision(6), +x.l.toPrecision(6)]);
     return { ...summary(d), rows: d.rows.map(({ _f, ...r }) => r), tagsUsed: d.tagsUsed, bal: d.bal, qEPS: d.qEPS, shares: d.shares, dps: d.dps, dpsGrowth5: d.dpsGrowth5,
       fund: d.fund, momentum: d.momentum, exhaustion: d.exhaustion, volatility: d.volatility, liquidity: d.liquidity,
-      valuation: { ...d.valuation, ctx: { ...d.valuation.ctx } }, valuationHistory: valuationHistory(d, st.tnx), history: d.history,
-      decision: d.decision, rfInfo: d.rfInfo, daily: thin(d.bars), monthly: d.monthly.map(b => [b.t, b.c]), div: d.div, splits: d.splits, rf: d.rf, erp: d.erp, regime: st.regime, calibration: st.calibration,
-      market: st.market ? st.market.bars.slice(-d.bars.length).map(b => [b.t, b.c]) : null };
+      valuation: { ...d.valuation, ctx: { ...d.valuation.ctx } }, valuationHistory: valuationHistory(d), history: d.history,
+      decision: d.decision, rfInfo: d.rfInfo, daily: thin(d.listing.ccy === d.ccy ? d.bars : X.convertBars(d.bars, d.listing.ccy, d.ccy, st.fx)), dailyNative: d.listing.ccy === d.ccy ? null : thin(d.bars.slice(-260)), monthly: d.monthly.map(b => [b.t, b.c]), div: d.div, splits: d.splits, rf: d.rf, erp: d.erp, regime: regimeFor(d), usRegime: st.regime, calibration: st.calibration, index: d.index, restated: d.restated, missingFields: d.missingFields,
+      market: marketFor(d) ? marketFor(d).slice(-d.bars.length).map(b => [b.t, b.c]) : null, marketName: d.index?.name || null };
   }
 
   const SOURCES = {
