@@ -555,26 +555,32 @@ Example portfolio: AAPL 30 %, MSFT 20 %, TSMC 20 %, Novo 15 %, JPM 15 % (US$ 250
 - **Lunch breaks and holidays** are not modelled beyond Yahoo's regular session times.
 - **The Alpaca paper adapter** is implemented but not wired into the order manager, and is untested without keys.
 
-## 17. Part 08: data infrastructure and interface (IN PROGRESS, 2026-11-25)
-**Done and committed:**
-- **Provider layer** (`src/providers.js`): registry with licence notes and live health for every source. Frankfurter (ECB) is the FX fallback. Stooq was rejected (bot challenge). New sources: SEC submissions (SIC codes and filings as announcements) and FRED macro.
-- **Retention:** market recordings older than 30 days are compacted daily (`src/retention.js`).
-- **Monitors** (`src/monitor.js`): data quality, model performance, and a **prospective log** (daily, recorded before outcomes are known).
-- **APIs:** `/api/monitor/data`, `/api/monitor/models`, `/api/macro`, `/api/research/filings`.
-- **New sections:** Valuation explorer, Company research directory, Quant screen, Risk lab, Data quality, Model performance; layout manager (`public/workstation.js`).
-- **Spread model:** daily-bar estimators proved unreliable for liquid stocks (NVDA 3 %, Toyota 1.5 %), so costs use a liquidity-tier model (2–50 bp by US$ daily value, an assumption). Quoted spreads replace it when available.
-- **Tests:** 108 pass.
+## 17. Part 08: data infrastructure and professional interface (done, 2026-11-25)
+| Requirement | Implementation |
+|---|---|
+| Providers chosen on availability, quality, licence, coverage and cost | Investigated before use: Stooq rejected (bot challenge); Frankfurter adopted (ECB, free); SEC submissions and FRED macro added. Full list with licences in `docs/DATA_PROVIDERS.md`. |
+| Data categories | OHLCV, delayed quotes, fundamentals and statements (SEC), corporate actions (Yahoo dividends and splits; SEC 8-K), earnings information (filing cadence, reported EPS; Finnhub with a key), dividends, sector classification (curated sectors + SEC SIC), economic indicators (FRED), interest rates (Treasury, OECD via FRED), announcements (SEC filings feed). News headlines: none free (Finnhub with a key). |
+| Provider abstraction | `src/providers.js` registry. Every HTTP request goes through `tracked()`, keyed by host. The FX fallback chain is in `fxSeries`. |
+| Live / delayed / historical / simulated | Labelled per source and per metric (badges), and listed in the Data quality section |
+| Caching, validation, error handling | Disk cache with TTL and stale fallback; Yahoo response validation; timeouts and retries; per-company stale flags |
+| Data integrity | Data quality section: provider states, last error, latency; per-company issues (missing fields, stale fundamentals > 450 days, share conflicts, restatements, price-only, fallback rates, cached data, cover-page shares); coverage; disk usage |
+| Ten sections | §1 market map · §1b valuation explorer · §1c company research (directory, SEC announcements) · §1d quant screen · §1e risk lab (17 regimes, macro, stress) · §6 portfolio lab · §5 backtesting · §7 paper trading · §8 data quality · §9 model performance (validation, evidence caps, prospective log, paper vs SPY). Live micro-structure views §2–§4 kept. |
+| Custom layouts, dark/light, persistence | Layout manager (show, hide, reorder; saved per browser); theme toggle; heat-map, layout and token preferences in localStorage |
+| Responsive; few API calls | One universe call shared by the sections (30 s cache); macro cached 6 h; filings 24 h; quotes only while viewed or orders are working |
+| Works when APIs fail | Stale cache served and flagged; monitor shows the failing provider |
+| Disk | Market recordings older than 30 days compacted daily; logs, paper book and experiments never pruned |
+
+**Spreads:** daily-bar estimators proved unreliable for liquid stocks (NVDA 3 %, Toyota 1.5 %). Costs therefore use a documented liquidity-tier model (2–50 bp by US$ daily value), and quoted spreads replace it when a quote feed is configured.
 
 **Verified:**
-- A live paper fill: Toyota, 100 shares at ¥3,434.39 ($21.56) on a quote newer than the order, $5 fee; cash debited exactly.
-- Providers, macro and filings endpoints work live.
+- Live paper fill: Toyota, 100 shares at ¥3,434.39 ($21.56) on a quote newer than the order, $5 fee, cash debited exactly.
+- Provider, macro and filings endpoints work live.
+- Stub-DOM test of the six new sections against the live server: 0 errors, 11 charts.
 
-**Not yet done:**
-- Stub-DOM test of the six new sections.
-- Tests for providers, retention and monitors.
-- Finnhub and Alpaca adapters (waiting for keys).
+**Tests:** 112 pass, 4 of them in `test/data.test.js`:
+- provider health with failing APIs;
+- keys never exposed;
+- retention never touching logs;
+- prospective log once a day, outcomes only after the horizon.
 
-**Remaining parts:**
-- Part 09: full test suite and final documentation (architecture, setup, dependencies, providers, testing report, feature matrix, paper-trading guide).
-- Part 10: intuitive visualisation, plus cutting the live-chart delay from about 0.4 s to 0.1 s or less.
-
+**Remaining:** Part 09 (full verification and final documentation) and Part 10 (intuitive visualisation, plus a live-chart delay of 0.1 s or less).
