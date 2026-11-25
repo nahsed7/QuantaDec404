@@ -24,6 +24,7 @@
   <button data-v="state"><span>§2</span> 10-D state space</button>
   <button data-v="flow"><span>§3</span> Order flow</button>
   <button data-v="lab"><span>§4</span> Analysis</button>
+  <button data-v="valid"><span>§5</span> Validation</button>
 </nav>
 
 <div class="controls" id="controls" hidden>
@@ -179,6 +180,16 @@
 </section>
 
 <!-- §4 -->
+<section id="valid" class="view">
+  <h2 class="sec-title">Historical validation <span class="muted">· does any of this have predictive value out of sample?</span></h2>
+  <div class="va-ctl"><label>Strategy <select id="vaSig"></select></label><button class="btn mini" id="vaRerun" title="Recompute from the current data (same data gives the same experiment id)">↻ Re-run</button>
+    <span class="va-chips"><span class="chip cat-train">In-sample</span><span class="chip cat-val">Validation</span><span class="chip cat-test">Out-of-sample</span><span class="chip cat-wf">Walk-forward</span><span class="chip muted">Paper: separate book</span><span class="chip muted">Live: disabled</span></span></div>
+  <p class="mono muted" id="vaStatus">Open this tab to load the latest experiment.</p>
+  <div id="vaBoard"></div>
+  <div id="vaBody"></div>
+  <div id="vaNotes" class="muted"></div>
+</section>
+
 <section id="lab" class="view">
   <h2>§4 Analysis</h2>
   <p class="lede" id="labLede">Computed live from the same sample as §2.</p>
@@ -247,5 +258,5 @@
 <script src="lab.js"></script>
 <script src="app.js"></script>
 <script src="trade.js"></script>
-<script src="heat.js"></script>
+<script src="heat.js"></script><script src="validation.js"></script>
 </body></html>

@@ -50,8 +50,9 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
   view = b.dataset.v;
   document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
   document.querySelectorAll('.view').forEach(s => s.classList.toggle('on', s.id === view));
-  $('controls').hidden = view === 'heat';
+  $('controls').hidden = !['state', 'flow', 'lab'].includes(view);   // instrument controls belong to the live views only
   labAt = 0; dirty[view] = true;
+  window.dispatchEvent(new CustomEvent('viewchange', { detail: view }));
 });
 let lastFrame = 0, heavyFrames = 0;
 function loop(ts) {
@@ -62,7 +63,8 @@ function loop(ts) {
   if (view === 'flow' || view === 'state') dirty[view] = true;      // time axis slides continuously
   if (!dirty[view]) return;
   lastFrame = ts; dirty[view] = false; heavyFrames++;
-  try { ({ heat: drawHeat, state: drawState, flow: drawFlow, lab: drawLab })[view](); } catch (e) { console.error(e); }
+  const draw = ({ heat: drawHeat, state: drawState, flow: drawFlow, lab: drawLab })[view];   // other views render themselves
+  if (draw) try { draw(); } catch (e) { console.error(e); }
 }
 requestAnimationFrame(loop);
 

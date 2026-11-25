@@ -299,7 +299,10 @@ const json = (res, code, v) => { res.writeHead(code, { 'Content-Type': 'applicat
 // ---- research pipeline (fundamentals, valuation, quant, decision scores) ----
 const RS = research.create({ dataDir: DATA, quotes: () => lastQuotes });
 RS.wanted = 0;
-const rsBuild = () => RS.build().catch(e => console.error('research build failed:', e.message));
+// ---- historical validation (Part 05): runs after each research build; identical inputs reuse the stored experiment ----
+const VS = require('./src/validation').create({ dataDir: DATA, research: RS });
+const vsRun = (force) => VS.run({ force }).catch(e => console.error('validation failed:', e.message));
+const rsBuild = () => RS.build().then(() => vsRun(false)).catch(e => console.error('research build failed:', e.message));
 setTimeout(rsBuild, 2000); setInterval(rsBuild, 6 * 3600e3);
 // Live prices change premiums and scores: refresh every 60 s while someone is looking (full model rerun every 15 min).
 setInterval(async () => { if (Date.now() - RS.wanted < 600e3 && !RS.state.building) { try { await heatmap(); RS.tick(); } catch (e) { console.error('research recompute:', e.message); } } }, 60e3);
@@ -371,6 +374,13 @@ http.createServer(async (req, res) => {
       }
       case '/api/research/universe': RS.wanted = Date.now(); return json(res, 200, RS.universeView());
       case '/api/research/company': { RS.wanted = Date.now(); const c = RS.company(String(q.get('sym') || '').toUpperCase()); return c ? json(res, 200, c) : json(res, 404, { error: RS.state.builtAt ? 'unknown symbol' : 'research data still loading' }); }
+      case '/api/validation': {
+        if (!VS.state.latest && !VS.state.running && RS.state.builtAt) vsRun(false);
+        return json(res, 200, { running: VS.state.running, progress: VS.state.progress, error: VS.state.error, experiment: VS.state.latest });
+      }
+      case '/api/validation/run': if (!VS.state.running && RS.state.builtAt) vsRun(q.get('force') === '1'); return json(res, 202, { running: true, progress: VS.state.progress });
+      case '/api/validation/experiments': return json(res, 200, VS.list());
+      case '/api/validation/experiment': { const e = VS.get(q.get('id') || ''); return e ? json(res, 200, e) : json(res, 404, { error: 'no such experiment' }); }
       case '/api/research/regime': return json(res, 200, { regime: RS.state.regime, calibration: RS.state.calibration, rf: RS.state.rfSource });
       case '/api/fng': return json(res, 200, await fng());
       case '/download': {

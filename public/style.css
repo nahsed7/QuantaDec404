@@ -210,3 +210,16 @@ details summary{cursor:pointer}
 @media (max-width:600px){.cp-scores{grid-template-columns:1fr}}
 /* Model confidence levels (valuation tab) */
 .conf-high{color:var(--buy)}.conf-medium{color:var(--warn)}.conf-low{color:var(--sell)}
+/* §5 Validation: category colours are used consistently everywhere results are shown, so categories never blur together */
+.sec-title{font-family:var(--serif,inherit);font-weight:600;margin:.4em 0 .2em}
+.va-ctl{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:6px 0}
+.va-chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip.cat-train,th.cat-train{border-bottom:3px solid var(--muted)}
+.chip.cat-val,th.cat-val{border-bottom:3px solid var(--accent2)}
+.chip.cat-test,th.cat-test{border-bottom:3px solid var(--buy)}
+.chip.cat-wf,th.cat-wf{border-bottom:3px solid var(--violet)}
+.va-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
+.va-verdict{border-left:3px solid var(--warn);padding:4px 10px;margin:8px 0;background:rgba(255,209,102,.06)}
+.va-verdict p{margin:.25em 0}
+tr.va-pick td{background:rgba(0,229,255,.08)}
+#vaBoard tr[data-sig]{cursor:pointer}

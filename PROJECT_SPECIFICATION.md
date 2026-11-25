@@ -5,7 +5,7 @@ Repository: github.com/nahsed7/QuantaDec404 (MIT). The full nine-part brief is i
 **Status, 2026-11-25:**
 - **Part 01 has been redone from scratch at the user's request**, as a fresh audit of the current code (§2).
 - Parts 02–09 will be implemented one at a time, each with tests, a spec update and its own commit.
-- **Part 02 (heat map) is done** (§11). **Part 03 (valuation and quantitative engines) is done** (§12).
+- **Done:** Part 02 heat map (§11), Part 03 valuation and quantitative engines (§12), Part 05 historical validation (§13).
 - The user then sent Parts 04–09 together and added a Part 10 (intuitive visualisation, plus cutting the live-chart delay to 0.1 s or less). They asked for all ten to be completed in order, with the best free choices made automatically and API keys requested once at the end.
 - Order agreed: 03 → 05 → 04 → 06 → 07 → 08 → 09 → 10. Validation comes before the decision-weight rework, so weights can be capped by evidence.
 - Live trading is disabled.
@@ -190,6 +190,7 @@ None of the free sources permit commercial redistribution. This is a private res
 | 2026-11-25 | The live server runs from the canonical clone. |
 | 2026-11-25 | Part 03: years 1–5 growth = terminal + 50 % of (historical − terminal); WACC floor = risk-free + 2 pts; statutory tax fallback. |
 | 2026-11-25 | Part 03: market statistics in the listing currency against the local index (16 indices); valuation in the reporting currency. |
+| 2026-11-25 | Part 05: validation on the US universe (point-in-time EPS, total returns); 60/20/20 chronological split; walk-forward 36/12; 10 bp per unit traded; seeded random baselines. |
 | 2026-11-25 | Answers to the open questions, chosen automatically at the user's request: fixed documented weights capped by validation; a stock paper book inside the existing account file; a one-time token for writes; compact tick data older than 30 days. |
 
 ## 8. Questions to the user: answers and decisions
@@ -356,4 +357,57 @@ The formulas, inputs, assumptions and limitations of every module are in **`docs
 - **BP:** no EPS or share counts in its XBRL at all, so it remains "insufficient".
 - **β and ERP in valuation history** are today's values. No free point-in-time β exists.
 - **Spread estimates** come from daily bars, not quotes: about 0.8 % against a true 1 % on synthetic data.
+
+## 13. Part 05: historical validation and overfitting protection (done, 2026-11-25)
+Engine `lib/backtest.js` (pure, tested); runner `src/validation.js`; view §5 **Validation** (`public/validation.js`). API: `/api/validation`, `/api/validation/run?force=1`, `/api/validation/experiments`, `/api/validation/experiment?id=`.
+
+### 13.1 Brief → implementation
+| Requirement | Implementation |
+|---|---|
+| Chronological train / validation / test | 60 % / 20 % / 20 % of the months. Parameters are chosen on train Sharpe only; test is computed once and reported as out-of-sample. |
+| Rolling-window testing | Rolling 24-month Sharpe, strategy vs benchmark, labelled descriptive. |
+| Walk-forward | Choose on the trailing 36 months, hold 12, repeat. Holdings carry over and switching costs are charged (`simulateSchedule`). |
+| Out-of-sample evaluation | The test segment and the concatenated walk-forward windows. |
+| Market-regime testing | Each month labelled from SPY up to that month (above or below its 10-month average; 6-month σ vs its median so far). Results per regime on validation and test. |
+| Transaction costs | 10 bp per unit of weight traded, on every rebalance. Sensitivity at 0, 10, 25 and 50 bp on validation. Turnover and cost drag reported. |
+| Survivorship bias | Cannot be removed with free data (no delisted prices). Disclosed everywhere. **Survivorship gap** = equal-weight universe CAGR − SPY CAGR (+3.5 %/yr) as an upper bound. |
+| Look-ahead prevention | Signals read only indices ≤ m; eligibility depends only on data at m; returns m → m+1. Tested by shocking every price after m and checking all signals and regimes at m are unchanged. |
+| Point-in-time fundamentals | EPS versions used from their filing date (originals, and restatements once filed); stale > 18 months = unknown. The valuation-engine signal reruns DCF, EPV and book with `F.asOf()` and β = 1. |
+| Delisted stocks | Not available from free sources. A holding without a next price exits at its last price and is counted as a "missing exit". |
+| No shuffling | Never; all splits are chronological. Random baselines randomise *picks*, not time. |
+| Benchmarks | SPY total return; equal-weight universe; buy-and-hold equal weight; 12−1 momentum; earnings-yield value; low volatility; value + momentum; 300 seeded random portfolios. |
+| Metrics | Total return, CAGR, volatility, Sharpe (vs 13-week T-bill), Sortino, max drawdown, excess return, information ratio, win rate vs benchmark, profit factor, turnover, cost drag, exposure, names, regime breakdown. |
+| Reliability | Degradation (in-sample → validation → test → walk-forward), parameter sensitivity (train and validation only), deflated Sharpe ratio (Bailey & López de Prado 2014), random-baseline percentile. |
+| Categories never mixed | Separate columns per category with distinct colours. Paper-trading results live in the paper book (Part 07); live is disabled. |
+| Reproducible experiments | id = sha1(config + data fingerprint). Stored in `data/research/experiments/`, with assumptions and biases. The same inputs give the same id and results (verified: scratch and live runs identical). |
+
+### 13.2 First results (experiment `6bc6096c65a0`, 55 US stocks, 2016-12 → 2026-11, 14.7 s on the phone)
+| Strategy | In-sample Sharpe | Validation | **Test** | **Walk-forward** | Test vs random |
+|---|---|---|---|---|---|
+| Momentum 12−1 | 1.09 | 1.34 | **0.06** | 0.66 | 18th pct |
+| Value (earnings yield, point-in-time) | 0.43 | 1.50 | **1.29** | 1.03 | 94th pct |
+| Low volatility | 0.45 | 1.30 | 0.78 | 0.59 | 59th pct |
+| Value + momentum | 0.83 | 1.98 | 0.49 | 0.96 | 31st pct |
+| Valuation engine (point-in-time premium) | 0.47 | 1.47 | 0.53 | 0.58 (excess ≈ 0) | 46th pct |
+
+SPY (full sample) CAGR 12.8 %, Sharpe 0.65. Equal-weight universe CAGR 16.3 %.
+
+Reading:
+- Momentum's in-sample strength did not survive out of sample.
+- Value is the only signal that beat most random portfolios in the test segment. About 21 test months is still weak evidence, and survivorship flatters every row.
+- These results feed the decision-engine weights in Part 04.
+
+### 13.3 Tests
+- **70 pass**, 12 of them in `test/backtest.test.js`:
+  - signals and regimes unchanged when the future is shocked; EPS and restatements visible only from their filing date; eligibility independent of the future;
+  - exact two-stock accounting (drift, traded weight, costs); metrics on known series;
+  - parameter choice unchanged when test data change; chronological, non-overlapping segments; walk-forward first window independent of later data;
+  - seeded reproducibility; deflated Sharpe monotonic in the number of trials and in Sharpe; survivorship gap.
+- **UI stub:** every strategy renders with no `undefined` or `NaN`, and all 4 charts get finite data.
+
+### 13.4 Limitations
+- US universe only. International filing histories are shorter, and the currencies differ.
+- Monthly frequency; long-only, equal-weight portfolios.
+- One test segment of about 21 months.
+- The valuation-engine signal omits comparables and own history (they need point-in-time peers), and uses β = 1.
 

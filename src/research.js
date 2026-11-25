@@ -458,7 +458,15 @@ function create({ dataDir, quotes }) {
     internationalFilings: { name: 'SEC EDGAR XBRL company facts (20-F, 40-F; IFRS or US GAAP)', kind: 'historical', refresh: 'weekly' },
   };
 
-  return { build, recompute, refreshPrices, tick, universeView, company, state: st, UNIVERSE, FINANCIAL };
+  // Point-in-time fundamentals for validation: rows and balance sheet exactly as filed by date t (today's share basis).
+  function pit(sym, t) {
+    const raw = st.raws?.find(r => r.sym === sym), d = st.dossiers.get(sym); if (!raw?.cf || !d) return null;
+    const cfT = F.asOf(raw.cf, t), { rows: r0 } = F.annual(cfT), balT = F.latest(cfT);
+    const rows = normaliseRows(r0, d.splits, d.cls, unitsFor(d.cls, balT.sharesOut, null));
+    return { rows, bal: balT, fund: rows.length ? F.analyse(rows, balT, null, V.STATUTORY_TAX[d.country] ?? 0.25) : null };
+  }
+  const epsVersionsFor = sym => epsVersions(st.raws?.find(r => r.sym === sym), st.dossiers.get(sym));
+  return { build, recompute, refreshPrices, tick, universeView, company, pit, epsVersionsFor, yahoo, state: st, UNIVERSE, FINANCIAL };
 }
 
 module.exports = { create, UNIVERSE, FINANCIAL, LOCAL_RF, parseYahooChart };
