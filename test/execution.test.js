@@ -70,17 +70,17 @@ test('duplicate submissions and order floods are blocked', () => {
 
 // ---------- order manager, end to end ----------
 const NOW = Date.now();
-function stubWorld() {
+function stubWorld(broker = require('../src/brokers').paper()) {
   const quotes = new Map([['AAA', { price: 100, time: NOW - 60e3, state: 'REGULAR', currency: 'USD' }]]);   // a fresh quote, 1 minute old
   const d = { sym: 'AAA', label: 'Aaa Co', sector: 'Tech', region: 'US', listing: { ccy: 'USD' }, nativePrice: 100, fresh: { priceTime: NOW - 60e3 }, liquidity: { spreadEst: 0.001, sigmaDaily: 0.02, advShares: 5e7 } };
   const research = { state: { dossiers: new Map([['AAA', d]]), fx: {} } };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oms-'));
-  const oms = require('../src/oms').create({ dataDir: dir, research, quotes: () => quotes, broker: require('../src/brokers').paper() });
-  return { oms, quotes, dir };
+  const oms = require('../src/oms').create({ dataDir: dir, research, quotes: () => quotes, broker });
+  return { oms, quotes, dir, research };
 }
 test('order manager: accepted order fills on a later quote; cash, position, fees and audit log are updated', async () => {
   const { oms, quotes, dir } = stubWorld();
-  const o = oms.submit({ sym: 'AAA', side: 'buy', type: 'market', qty: 100 });
+  const o = await oms.submit({ sym: 'AAA', side: 'buy', type: 'market', qty: 100 });
   assert.equal(o.status, 'working');
   await oms.tick(); assert.equal(oms.view().orders[0].filled, 0);              // same quote as at submission: no fill
   quotes.set('AAA', { price: 101, time: Date.now() + 60e3, state: 'REGULAR', currency: 'USD' });
@@ -95,9 +95,9 @@ test('order manager: accepted order fills on a later quote; cash, position, fees
 });
 test('order manager: rejected orders are recorded with reasons; working orders can be cancelled; day orders expire', async () => {
   const { oms, quotes, dir } = stubWorld();
-  const bad = oms.submit({ sym: 'AAA', side: 'sell', type: 'market', qty: 5 }); assert.equal(bad.status, 'rejected'); assert.match(bad.reason, /short selling is disabled/);
-  const lim = oms.submit({ sym: 'AAA', side: 'buy', type: 'limit', limit: 95, qty: 10 }); assert.equal(oms.cancel(lim.id).status, 'cancelled'); assert.ok(oms.cancel(lim.id).error);
-  const day = oms.submit({ sym: 'AAA', side: 'buy', type: 'limit', limit: 95, qty: 11 });
+  const bad = await oms.submit({ sym: 'AAA', side: 'sell', type: 'market', qty: 5 }); assert.equal(bad.status, 'rejected'); assert.match(bad.reason, /short selling is disabled/);
+  const lim = await oms.submit({ sym: 'AAA', side: 'buy', type: 'limit', limit: 95, qty: 10 }); assert.equal((await oms.cancel(lim.id)).status, 'cancelled'); assert.ok((await oms.cancel(lim.id)).error);
+  const day = await oms.submit({ sym: 'AAA', side: 'buy', type: 'limit', limit: 95, qty: 11 });
   quotes.set('AAA', { price: 100, time: NOW + 86400e3, state: 'REGULAR', currency: 'USD' }); await oms.tick();   // next session
   assert.equal(oms.view().orders.find(x => x.id === day.id).status, 'expired');
   fs.rmSync(dir, { recursive: true, force: true });
@@ -109,6 +109,62 @@ test('live trading is disabled: no live adapter, and the Alpaca adapter refuses 
   assert.equal(B.LIVE_TRADING_ENABLED, false); assert.equal(B.paper().live, false);
   assert.throws(() => B.alpacaPaper({}, 'https://api.alpaca.markets'), /only the Alpaca paper endpoint/);
   const a = B.alpacaPaper({}); assert.equal(a.live, false); assert.equal(a.configured, false);
+});
+// A fake Alpaca paper API: keeps orders in memory; the test moves them through Alpaca's states.
+function fakeAlpaca() {
+  const orders = new Map(), calls = []; let n = 0;
+  const reply = (code, j) => ({ ok: code < 300, status: code, json: async () => j });
+  const fetchImpl = async (url, { method, headers, body }) => {
+    const p = new URL(url).pathname; calls.push({ method, p, headers, body: body && JSON.parse(body) });
+    assert.equal(new URL(url).origin, 'https://paper-api.alpaca.markets');
+    if (p === '/v2/clock') return reply(200, { is_open: true });
+    if (p === '/v2/orders' && method === 'POST') { const b = JSON.parse(body); if (b.symbol === 'NOPE') return reply(422, { message: 'asset not found' });
+      const o = { id: 'alp-' + (++n), status: 'accepted', filled_qty: '0', filled_avg_price: null, ...b }; orders.set(o.id, o); return reply(200, o); }
+    const id = decodeURIComponent(p.split('/').pop()), o = orders.get(id); if (!o) return reply(404, { message: 'not found' });
+    if (method === 'DELETE') { o.status = 'canceled'; return { ok: true, status: 204, json: async () => { throw new Error('no body'); } }; }
+    return reply(200, o);
+  };
+  return { orders, calls, fetchImpl };
+}
+test('Alpaca paper routing: US orders go to Alpaca, fills are mirrored incrementally, rejections and cancels follow the venue', async () => {
+  const B = require('../src/brokers'), F = fakeAlpaca();
+  const alp = B.alpacaPaper({ ALPACA_KEY_ID: 'k', ALPACA_SECRET_KEY: 's' }, B.ALPACA_PAPER, F.fetchImpl);
+  assert.equal(alp.healthy(), null); assert.equal(await alp.checkHealth(), true); assert.equal(alp.healthy(), true);
+  const { oms, research, dir } = stubWorld(B.routed({ remote: alp }));
+  const o = await oms.submit({ sym: 'AAA', side: 'buy', type: 'limit', limit: 101, qty: 100 });
+  assert.equal(o.status, 'working'); assert.equal(o.venue, 'alpaca-paper'); assert.equal(o.remoteId, 'alp-1');
+  const sent = F.calls.find(c => c.method === 'POST').body;
+  assert.deepEqual([sent.symbol, sent.qty, sent.side, sent.type, sent.limit_price, sent.time_in_force, sent.client_order_id], ['AAA', '100', 'buy', 'limit', '101', 'day', o.id]);
+  assert.equal(F.calls[0].headers['APCA-API-KEY-ID'], 'k');
+  // Two partial fills at Alpaca: 40 @ 100, then 100 total @ avg 100.6 → the second local fill is 60 @ 101.
+  Object.assign(F.orders.get('alp-1'), { status: 'partially_filled', filled_qty: '40', filled_avg_price: '100' }); await oms.tick();
+  let v = oms.view(), mine = v.orders.find(x => x.id === o.id);
+  assert.equal(mine.status, 'partially_filled'); assert.equal(mine.filled, 40); assert.equal(v.positions.AAA.qty, 40);
+  Object.assign(F.orders.get('alp-1'), { status: 'filled', filled_qty: '100', filled_avg_price: '100.6' }); await oms.tick();
+  v = oms.view(); mine = v.orders.find(x => x.id === o.id);
+  assert.equal(mine.status, 'filled'); assert.equal(mine.fills.length, 2); assert.ok(Math.abs(mine.fills[1].price - 101) < 1e-9); assert.ok(Math.abs(mine.avgPrice - 100.6) < 1e-9);
+  assert.ok(Math.abs(v.cashUSD - (100000 - 10060)) < 1e-6); assert.equal(v.positions.AAA.qty, 100);
+  await oms.tick(); assert.equal(oms.view().fills.length, 2);   // no double counting on later polls
+  // The venue's own rejection becomes a local rejection with its reason.
+  research.state.dossiers.set('NOPE', { ...research.state.dossiers.get('AAA'), sym: 'NOPE' });
+  const bad = await oms.submit({ sym: 'NOPE', side: 'buy', type: 'market', qty: 1 }); assert.equal(bad.status, 'rejected'); assert.match(bad.reason, /asset not found/);
+  // Cancel goes to the venue first; the local state follows Alpaca's answer.
+  const lim = await oms.submit({ sym: 'AAA', side: 'buy', type: 'limit', limit: 90, qty: 5 });
+  const c = await oms.cancel(lim.id); assert.equal(c.status, 'cancelled'); assert.ok(F.calls.some(x => x.method === 'DELETE' && x.p === '/v2/orders/' + lim.remoteId));
+  // Non-US orders stay with the local simulator.
+  research.state.dossiers.set('BBB', { ...research.state.dossiers.get('AAA'), sym: 'BBB', region: 'EU' });
+  assert.equal(B.routed({ remote: alp }).venueFor({ sym: 'BBB' }, { region: 'EU' }).id, 'paper');
+  assert.match(oms.view().disclosure, /Alpaca paper trading/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+test('Alpaca paper routing: without keys every order is simulated locally, and an unhealthy venue blocks new orders', async () => {
+  const B = require('../src/brokers'), none = B.routed({ remote: B.alpacaPaper({}) });
+  assert.equal(none.venueFor({}, { region: 'US' }).id, 'paper');
+  const down = B.alpacaPaper({ ALPACA_KEY_ID: 'k', ALPACA_SECRET_KEY: 's' }, B.ALPACA_PAPER, async () => { throw new Error('offline'); });
+  assert.equal(await down.checkHealth(), false);
+  const { oms, dir } = stubWorld(B.routed({ remote: down }));
+  const o = await oms.submit({ sym: 'AAA', side: 'buy', type: 'market', qty: 1 }); assert.equal(o.status, 'rejected'); assert.match(o.reason, /venue is unavailable/);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 test('write protection: loopback or the right token is allowed; anything else is not', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'auth-')), A = require('../src/auth').create(dir), tok = A.token();

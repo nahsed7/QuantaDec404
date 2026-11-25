@@ -313,7 +313,10 @@ const vsRun = (force) => VS.run({ force }).then(() => RS.setEvidence(VS.evidence
 RS.setEvidence(VS.evidence);
 // ---- portfolio laboratory (Part 06) ----
 // ---- equity paper trading (Part 07): risk controls → order manager → broker adapter (paper only) ----
-const BROKERS = require('./src/brokers'), BROKER = BROKERS.paper();
+const BROKERS = require('./src/brokers'), ALPACA = BROKERS.alpacaPaper();
+// With Alpaca paper keys in .env, US orders go to Alpaca paper; everything else (and everything without keys) is simulated locally.
+const BROKER = ALPACA.configured ? BROKERS.routed({ local: BROKERS.paper(), remote: ALPACA }) : BROKERS.paper();
+if (ALPACA.configured) { ALPACA.checkHealth(); setInterval(() => ALPACA.checkHealth(), 60e3); }
 async function fetchQuotes(syms) {                       // quotes for symbols with working orders, even when nobody is viewing
   const res = await Promise.allSettled(syms.map(s => quote(s)));
   res.forEach((r, i) => { if (r.status === 'fulfilled') lastQuotes.set(syms[i], { sym: syms[i], ...r.value }); });
@@ -346,8 +349,8 @@ http.createServer(async (req, res) => {
       case '/api/macro': try { return json(res, 200, await MON.macro()); } catch (e) { return json(res, 502, { error: e.message }); }
       case '/api/research/filings': try { return json(res, 200, await MON.filings(String(q.get('sym') || '').toUpperCase())); } catch (e) { return json(res, 502, { error: e.message }); }
       case '/api/paper/preview': { let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON' }); } const p = OMS.preview(b); return json(res, p.error ? 400 : 200, p); }
-      case '/api/paper/order': { let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON' }); } const o = OMS.submit(b); return json(res, o.status === 'rejected' ? 422 : 201, o); }
-      case '/api/paper/cancel': { let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON' }); } const o = OMS.cancel(String(b.id || '')); return json(res, o.error ? 400 : 200, o); }
+      case '/api/paper/order': { let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON' }); } const o = await OMS.submit(b); return json(res, o.status === 'rejected' ? 422 : 201, o); }
+      case '/api/paper/cancel': { let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON' }); } const o = await OMS.cancel(String(b.id || '')); return json(res, o.error ? 400 : 200, o); }
       case '/api/paper/reset': { let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON' }); } return json(res, 200, OMS.reset(b.cash)); }
       case '/api/paper/limits': { let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON' }); } return json(res, 200, OMS.setLimits(b)); }
       case '/api/heatmap': return json(res, 200, await heatmap());

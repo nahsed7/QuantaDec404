@@ -37,10 +37,13 @@ function create({ dataDir, research, quotes, fetchQuotes, broker }) {
     return { equityUSD: equity, marketValueUSD: mv, positions: pos };
   }
   function dayStartEquity() { const today = dayKey(Date.now()), prev = book.snapshots.filter(s => s.date < today).at(-1); return prev?.equityUSD ?? book.startCashUSD; }
-  function riskContext(order) {
+  // Execution venue for an order: a router picks per order (Alpaca for US when configured); a plain adapter is the venue.
+  const venueFor = (o, s) => broker.venueFor ? broker.venueFor(o, s) : broker;
+  const venueById = id => broker.venues?.[id] || broker;
+  function riskContext(order, venue = venueFor(order, snapshot(order.sym))) {
     const v = valuation();
     return { book: { cashUSD: book.cashUSD - reservedCash(), equityUSD: v.equityUSD, positions: v.positions, dayStartEquityUSD: dayStartEquity() }, snap: snapshot(order.sym),
-      recent: book.orders.slice(-50), now: Date.now(), brokerHealthy: broker.healthy(), limits: book.limits };
+      recent: book.orders.slice(-50), now: Date.now(), brokerHealthy: venue.healthy(), limits: book.limits };
   }
   // Cash committed to working buy orders (so two orders cannot both spend the same cash).
   function reservedCash() {
@@ -54,18 +57,32 @@ function create({ dataDir, research, quotes, fetchQuotes, broker }) {
     const o = clean(input), s = snapshot(o.sym); if (!s) return { error: 'unknown symbol' };
     return { order: o, snapshot: s, estimate: broker.estimate(o, s), checks: RC.check(o, riskContext(o)), disclosure: DISCLOSURE };
   }
-  function submit(input) {
-    const o = clean(input), s = snapshot(o.sym), checks = RC.check(o, riskContext(o));
+  // Async because a remote venue (Alpaca paper) confirms the order over the network before it is working.
+  async function submit(input) {
+    const o = clean(input), s = snapshot(o.sym), venue = venueFor(o, s), checks = RC.check(o, riskContext(o, venue));
     const rec = { id: crypto.randomBytes(6).toString('hex'), ...o, submittedAt: Date.now(), filled: 0, avgPrice: null, feesUSD: 0, fills: [], label: s?.label,
-      session: s?.open && S.fin(s.time) ? dayKey(s.time) : null, sessionEnd: s?.open ? s.sessionEnd : null, status: checks.ok ? 'working' : 'rejected', checks, venue: broker.id };
+      session: s?.open && S.fin(s.time) ? dayKey(s.time) : null, sessionEnd: s?.open ? s.sessionEnd : null, status: checks.ok ? 'working' : 'rejected', checks, venue: venue.id };
     if (!checks.ok) rec.reason = checks.blocks.map(b => b.text).join(' ');
+    if (checks.ok && venue.remote) {
+      // The local risk checks ran first; the venue can still refuse (its own buying power, symbol, hours…).
+      try { const r = await venue.submit({ ...rec, clientId: rec.clientId || rec.id }); rec.remoteId = r.remoteId; rec.remoteStatus = r.raw; if (r.status === 'rejected') { rec.status = 'rejected'; rec.reason = `${venue.name} rejected the order.`; } }
+      catch (e) { rec.status = 'rejected'; rec.reason = `${venue.name}: ${e.message}`; }
+    }
     book.orders.push(rec); log(rec.status === 'rejected' ? 'rejected' : 'accepted', { order: rec }); persist();
     if (checks.ok) setImmediate(() => tick().catch(() => {}));
     return rec;
   }
-  function cancel(id) {
+  async function cancel(id) {
     const o = book.orders.find(x => x.id === id); if (!o) return { error: 'no such order' };
     if (!['working', 'partially_filled'].includes(o.status)) return { error: `order is ${o.status}` };
+    if (o.remoteId) {
+      // Ask the venue, then take its word: shares that filled before the cancel arrived are still booked.
+      const v = venueById(o.venue);
+      try { await v.cancel(o.remoteId); } catch (e) { return { error: `${v.name}: ${e.message}` }; }
+      o.cancelRequested = true; await syncRemote(o).catch(() => {});
+      if (o.status === 'working' || o.status === 'partially_filled') { o.lastNote = 'cancel requested at the venue'; persist(); return o; }
+      log('cancelled', { id, filled: o.filled, venue: o.venue }); persist(); return o;
+    }
     o.status = 'cancelled'; o.closedAt = Date.now(); log('cancelled', { id, filled: o.filled }); persist(); return o;
   }
   function applyFill(o, f, s) {
@@ -78,14 +95,28 @@ function create({ dataDir, research, quotes, fetchQuotes, broker }) {
     o.avgPrice = ((o.avgPrice || 0) * o.filled + f.price * f.qty) / (o.filled + f.qty); o.filled += f.qty; o.feesUSD += f.feeUSD; o.fills.push(f);
     book.fills.push({ order: o.id, sym: o.sym, side: o.side, ...f }); log('fill', { order: o.id, sym: o.sym, side: o.side, fill: f });
   }
+  // Mirror a remote order: new filled quantity since the last poll becomes one local fill at the incremental average price.
+  async function syncRemote(o) {
+    const v = venueById(o.venue), r = await v.status(o.remoteId); o.remoteStatus = r.raw;
+    const delta = Math.floor(r.filledQty - o.filled);
+    if (delta > 0 && S.fin(r.avgPrice)) {
+      const price = (r.avgPrice * r.filledQty - (o.avgPrice || 0) * o.filled) / delta, s = snapshot(o.sym) || { ccy: 'USD', sector: null, region: 'US' };
+      applyFill(o, { qty: delta, price, priceUSD: price, feeUSD: 0, time: r.updatedAt, venue: o.venue, note: 'Alpaca paper fill (commission-free; regulatory fees on sells not modelled)' }, s);
+    }
+    const st = r.status === 'working' && o.filled > 0 ? 'partially_filled' : r.status;
+    if (st !== o.status) { o.status = st; if (!['working', 'partially_filled'].includes(st)) { o.closedAt = Date.now(); log(st, { id: o.id, filled: o.filled, venue: o.venue }); } }
+    return true;
+  }
   // Evaluate every working order against the latest quotes (fetched for those symbols, so orders work unattended).
   let ticking = false;
   async function tick() {
     if (ticking) return; ticking = true;
     try {
       const working = book.orders.filter(o => o.status === 'working' || o.status === 'partially_filled'); let changed = false;
-      if (working.length && fetchQuotes) await fetchQuotes([...new Set(working.map(o => o.sym))]).catch(() => {});
-      for (const o of working) {
+      for (const o of working.filter(o => o.remoteId)) { try { const f = o.filled, st = o.status; await syncRemote(o); if (o.filled !== f || o.status !== st) changed = true; } catch (e) { o.lastNote = `venue status unavailable: ${e.message}`; } }
+      const local = working.filter(o => !o.remoteId);
+      if (local.length && fetchQuotes) await fetchQuotes([...new Set(local.map(o => o.sym))]).catch(() => {});
+      for (const o of local) {
         const s = snapshot(o.sym); if (!s) continue;
         // Day orders expire once their session has ended (a quote from a later day, or the market closed after submission).
         // Day orders expire when their session ends (the exchange's regular-session end; date change as a fallback).
@@ -113,7 +144,7 @@ function create({ dataDir, research, quotes, fetchQuotes, broker }) {
   }
   function view() {
     const v = valuation(), sec = {}; for (const p of Object.values(v.positions)) sec[p.sector] = (sec[p.sector] || 0) + (p.weight || 0);
-    return { venue: broker.name, live: false, disclosure: DISCLOSURE, limits: { ...RC.LIMITS, ...book.limits }, cashUSD: book.cashUSD, reservedUSD: reservedCash(), startCashUSD: book.startCashUSD,
+    return { venue: broker.name, live: false, disclosure: broker.remote?.configured ? DISCLOSURE_ALPACA + ' ' + DISCLOSURE : DISCLOSURE, limits: { ...RC.LIMITS, ...book.limits }, cashUSD: book.cashUSD, reservedUSD: reservedCash(), startCashUSD: book.startCashUSD,
       created: book.created, equityUSD: v.equityUSD, marketValueUSD: v.marketValueUSD, pnlUSD: v.equityUSD - book.startCashUSD, positions: v.positions, sectors: sec,
       orders: book.orders.slice(-200).reverse(), fills: book.fills.slice(-200).reverse(), snapshots: book.snapshots, rev: book.rev, category: 'paper-trading (simulated fills, delayed data)' };
   }
@@ -127,4 +158,5 @@ function create({ dataDir, research, quotes, fetchQuotes, broker }) {
   return { preview, submit, cancel, tick, view, reset, setLimits, holdings, snapshot, book: () => book };
 }
 const DISCLOSURE = 'Simulated paper trading. Fills are computed only against quotes timestamped after the order, and the free quotes are delayed (about 15–20 minutes), so a fill typically appears 15–20 minutes after submission with an estimated bid–ask spread, square-root market impact, a cap of 10 % of the volume in each interval (so large orders fill partially) and a fee schedule (US: $0.005/share, min $1, max 1 %; other markets: 0.10 %, min $5). Real execution can differ. No real money and no real broker are involved; live trading is disabled.';
-module.exports = { create, DISCLOSURE };
+const DISCLOSURE_ALPACA = 'US orders are sent to Alpaca paper trading (simulated by Alpaca against real-time quotes, no real money); their fills are mirrored here every 30 s. The rest of this note applies to non-US orders.';
+module.exports = { create, DISCLOSURE, DISCLOSURE_ALPACA };

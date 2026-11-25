@@ -1,7 +1,7 @@
 # Testing report (2026-11-25)
 
 **Command:** `npm test` (`node --test test/*.test.js`).
-**Result:** **121 tests, 121 pass**, about 21 s on the phone. No network is used.
+**Result:** **124 tests, 124 pass**, about 21 s on the phone. No network is used.
 
 ## Test data
 - **Synthetic fixtures**, labelled as such in every file: built from seeded RNGs or with closed-form answers. Examples: a 1 % bid–ask bounce, two-asset minimum variance, DCF = Gordon growth.
@@ -42,6 +42,6 @@
 
 ## Not covered by automated tests
 - Real browsers: the tests use a DOM stand-in, so layout and CSS are unchecked.
-- The Alpaca adapter (needs keys).
+- The real Alpaca API. Routing, partial-fill mirroring, rejections, cancels and health blocking are tested against a fake Alpaca API; the real endpoint is untested until keys are given.
 - Very long uptime.
 - Behaviour on Yahoo API changes beyond the shapes captured.

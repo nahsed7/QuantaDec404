@@ -18,7 +18,7 @@ A private, local-first market research workstation. Everything runs in one Node.
   ├─ src/portfolio.js + lib/portfolio.js ── portfolio research and opportunity cost (hypothetical only)
   ├─ lib/riskcontrol.js ── pre-trade risk controls
   ├─ src/oms.js ── order management (equity paper book, audit log)
-  ├─ src/brokers.js ── broker adapters: local paper simulator (lib/execsim.js); Alpaca paper-only; live disabled
+  ├─ src/brokers.js ── broker adapters: local paper simulator (lib/execsim.js); Alpaca paper (US orders, when keys are set) via a venue router; live disabled
   ├─ src/monitor.js ── data quality, model performance, prospective log, macro, filings
   ├─ src/retention.js ── disk retention    src/auth.js ── write token, .env loader
   └─ public/ ── workstation UI (vanilla JS + Plotly): map, valuation explorer, company research, quant screen,

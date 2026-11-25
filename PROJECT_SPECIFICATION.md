@@ -609,7 +609,7 @@ Example portfolio: AAPL 30 %, MSFT 20 %, TSMC 20 %, Novo 15 %, JPM 15 % (US$ 250
 | 05 | Survivorship and delisted stocks | ⚠️ not removable with free data; disclosed, with a survivorship-gap bound | |
 | 06 | Portfolio risk, diversification, exposures, liquidity, scenarios, allocations, opportunity cost, visualisation | ✅ | §15, `lib/portfolio.js` |
 | 07 | Ticket in the company panel; market, limit, stop and stop-limit; sizing; fees, spread, slippage; partial fills and rejections; six layers; risk controls; live disabled; credentials in `.env` | ✅ | §16 |
-| 07 | Alpaca paper adapter | ⚠️ implemented, not wired; untested without keys | `src/brokers.js` |
+| 07 | Alpaca paper adapter | ✅ wired: US orders route to Alpaca when keys are set; tested against a fake API, real endpoint untested until keys | `src/brokers.js`, §20 |
 | 08 | Provider layer, health, fallbacks, integrity monitor, ten sections, custom layout, themes, caching, retention | ✅ | §17 |
 | 08 | News headlines | ⚠️ SEC filings only; headlines need a Finnhub key | |
 | 09 | Automated tests in all 12 categories, reproducible datasets, traceability, documentation | ✅ | `docs/TESTING.md` |
@@ -662,4 +662,11 @@ The user's request: "a 10th layer entirely focusing on intuitive visualization r
 - The FX delay floor (~110 ms) is network distance from the phone's mobile connection. From the PC over the hotspot, crypto goes direct from the PC; FX adds the hotspot hop of a few ms.
 - Equity quotes stay delayed 15–20 minutes (free data). Real-time US quotes need the Alpaca key.
 - Tick-to-screen is measured in the browser and shown live; it was not measured on the user's PC from here.
+
+## 20. Follow-up: Alpaca paper adapter wired (2026-11-25)
+- **Router** (`brokers.routed`): with `ALPACA_KEY_ID` and `ALPACA_SECRET_KEY` in `.env`, US orders go to Alpaca paper. Every other order, and every order when no keys are set, stays with the local simulator.
+- **Order manager:** `submit` and `cancel` are now async. Remote orders are polled every 30 s, and new filled quantity becomes one local fill at the incremental average price, with fee 0 (Alpaca is commission-free). Alpaca's rejections and cancel results take precedence.
+- **Health** is cached and refreshed every 60 s. An unreachable venue blocks new orders through the existing risk check.
+- **Decision:** new shares are found from the order status (`filled_qty`, `filled_avg_price`), not from the account-activities feed. It needs one call per order and cannot double-count. The cost is that partial fills between two polls merge into one fill.
+- **Tests:** 124 pass, 2 of them new, against a fake Alpaca API. The real endpoint stays untested until keys are given.
 
