@@ -5,7 +5,7 @@ Repository: github.com/nahsed7/QuantaDec404 (MIT). The full nine-part brief is i
 **Status, 2026-11-25:**
 - **Part 01 has been redone from scratch at the user's request**, as a fresh audit of the current code (§2).
 - Parts 02–09 will be implemented one at a time, each with tests, a spec update and its own commit.
-- **Done:** Part 02 heat map (§11), Part 03 valuation and quantitative engines (§12), Part 05 historical validation (§13).
+- **Done:** Part 02 heat map (§11), Part 03 valuation and quantitative engines (§12), Part 05 historical validation (§13), Part 04 decision intelligence (§14).
 - The user then sent Parts 04–09 together and added a Part 10 (intuitive visualisation, plus cutting the live-chart delay to 0.1 s or less). They asked for all ten to be completed in order, with the best free choices made automatically and API keys requested once at the end.
 - Order agreed: 03 → 05 → 04 → 06 → 07 → 08 → 09 → 10. Validation comes before the decision-weight rework, so weights can be capped by evidence.
 - Live trading is disabled.
@@ -94,14 +94,14 @@ These were found by reading the code and checking the live data. They are weakne
 4. **Market-regime panel was down** (*fixed in Part 02*: timeouts, retries and response validation on every request).
    - The SPY download failed on the last build: Node's `fetch` timed out connecting to one Yahoo IP, while `curl` succeeded. Nothing was cached, so the regime shows "needs 210 bars".
    - `getJSON` has no timeout or retry, and Yahoo responses are never validated.
-5. **Score weights and scales are hand-picked and undocumented.**
+5. **Score weights and scales are hand-picked and undocumented** (*fixed in Part 04*: percentile ranks plus documented prior weights, capped by evidence).
    - Examples: valuation weight 3, `1000·(yield − rf)`, volatility/0.6.
    - This breaks the brief's rule 4: no weights without a documented rationale.
-6. **Valuation dominates opportunity although the data does not support it.**
+6. **Valuation dominates opportunity although the data does not support it** (*fixed in Part 04*: the valuation-engine signal was weak out of sample, so its weight is halved).
    - Valuation has the largest weight (3).
    - The live calibration shows the earnings-yield signal had *negative* rank-IC (−0.056, t = −1.19, 35 quarters) in this universe.
    - The design should let the validation results (Part 05) set or cap how much each component counts.
-7. **The "out-of-sample validation" input to confidence is not out-of-sample.** It is the later half of the same calibration sample, with no held-out test and no protection against choosing models after seeing the data.
+7. **The "out-of-sample validation" input to confidence is not out-of-sample** (*fixed in Part 04*: it now uses Part 05 walk-forward and test results). It is the later half of the same calibration sample, with no held-out test and no protection against choosing models after seeing the data.
 8. **Fixed assumptions** (*Part 03*: β, ERP and the risk-free rate are now editable and re-derive the discount rates; the tax fallback is the statutory rate per country). The equity risk premium is a constant 5%. The CAPM beta uses a Blume adjustment. Both are reasonable, but they apply to all stocks and only the browser can override them.
 9. **Liquidity cost model** (*Part 03*: the spread estimator was 2× too high, now fixed; a cost curve is labelled theoretical) (half-spread + σ√(Q/ADV), k = 1). The spread is estimated from daily bars, not quotes; this is never labelled in the UI.
 10. **Paper trading realism.** Fills at the displayed bid or ask, with no fees, financing, slippage, partial fills or rejections.
@@ -410,4 +410,53 @@ Reading:
 - Monthly frequency; long-only, equal-weight portfolios.
 - One test segment of about 21 months.
 - The valuation-engine signal omits comparables and own history (they need point-in-time peers), and uses β = 1.
+
+## 14. Part 04: decision intelligence and uncertainty decomposition (done, 2026-11-25)
+The method is in `docs/MODELS.md` §6.
+
+### 14.1 Brief → implementation
+| Requirement | Implementation |
+|---|---|
+| Three independent outputs | Opportunity, risk and confidence, built from disjoint inputs. A test checks that confidence inputs cannot move the other two. |
+| Opportunity items | valuation, momentum, quality, relative performance, growth prospects (the shrunk assumption), **catalysts** (reported EPS change, plus estimated report and ex-dividend dates), opportunity cost (yield − local risk-free) |
+| Risk items | volatility, drawdown, valuation risk, distress, liquidity, concentration (from the paper portfolio, Part 06), model risk, regime risk |
+| Confidence items | completeness, **data quality** (new), freshness, model agreement, **primary-model confidence** (new), historical signal performance and out-of-sample results (**real Part 05 evidence**), stability, sensitivity, range width, coverage |
+| High opportunity ≠ high confidence | Independent by construction. Interpretation bands make 86/79/38 read as attractive but highly uncertain. |
+| Explanations for every score | Every component carries its raw value, explanation, calculation, source, prior weight with rationale, the weight used, and its evidence. Shown in expandable tables. |
+| Calibrate against history; no false precision | Weights are capped by out-of-sample results. Scores are rounded to 5 and withheld with fewer than 3 measured components. The composite cannot be rebuilt historically (stated as a limitation); its validated signal families are. |
+| Uncertainty decomposition | supporting / contradicting (shown first) / unknown / assumptions / swing variables / alternative explanations / failure conditions / limitations / catalysts. Model disagreements without range overlap count as contradicting evidence. |
+| Scenario analysis | 7 valuation scenarios, now also fed into the **scores**, sorted by effect on the conclusion |
+| Traceability | source → calculation → assumption → validation evidence → uncertainty, per component |
+| Comparison | relative valuation, risk, opportunity, confidence and data quality; opportunity cost; **return correlation**. Never selects a winner. |
+
+### 14.2 Current evidence caps (experiment `6bc6096c65a0`)
+| Component | Result |
+|---|---|
+| Valuation | weight 2 → **1** (valuation-engine signal weak out of sample: walk-forward excess ≈ 0, test 46th percentile) |
+| Momentum | weight 1 → **0.5** (test 18th percentile) |
+| Relative performance | weight 0.5 → **0.25** (momentum family) |
+| Opportunity cost | weight **1** kept (value family supported: walk-forward excess +6.4 %/yr, test 94th percentile) |
+
+Quality, growth and catalysts are untested and keep their priors, labelled "untested".
+
+### 14.3 Live distribution (98 companies)
+| Score | Min / median / max |
+|---|---|
+| Opportunity | 5 / 50 / 90 |
+| Risk | 10 / 50 / 85 |
+| Confidence | 15 / 60 / 75 |
+
+Price-only companies now show "withheld" rather than a score built on 2 price inputs.
+
+### 14.4 Tests
+- **81 pass**, 11 of them in `test/decision.test.js`:
+  - rank semantics; evidence multipliers (caps only); weak evidence halving weights and being listed as contradicting;
+  - independence; the brief's example interpretation; traceability fields; scenario score effects;
+  - data-quality penalties and "unknown when empty"; catalyst estimates labelled; comparison correlation; withholding.
+- **UI harnesses:** heat map and validation views on the live server, 0 errors.
+
+### 14.5 Limitations
+- Percentile ranks are relative to this universe of 98. A score of 80 means "better than most of these", not good in absolute terms.
+- Untested components (quality, growth, catalysts) rely on priors.
+- Catalyst dates are estimates; no earnings calendar API is used. A Finnhub key, if provided, would add announced dates.
 

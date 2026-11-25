@@ -146,11 +146,15 @@
   const modelName = (d, id) => d.valuation.models.find(m => m.id === id)?.name || id || 'none';
   function scoreCard(name, s) {
     const b = window.QDecision.band(s.score);
-    return `<div class="cp-score"><div class="muted">${name}</div><div class="cp-num">${s.score ?? 'n/a'}<small>/100</small></div><div class="muted">${b} · ${s.known}/${s.total} parts measured</div></div>`;
+    return `<div class="cp-score"><div class="muted">${name}</div><div class="cp-num">${s.score ?? 'n/a'}<small>/100</small></div><div class="muted">${s.withheld ? `<span class="warn">withheld: ${esc(s.withheld)}</span>` : `${b} · ${s.known}/${s.total} parts measured`}</div></div>`;
   }
   const list = (title, arr, cls = '') => `<div class="cp-ev ${cls}"><h4>${title} <span class="muted">(${arr.length})</span></h4>${arr.length ? '<ul>' + arr.map(x => `<li>${esc(x)}</li>`).join('') + '</ul>' : '<p class="muted">None identified.</p>'}</div>`;
+  const EVS = { supported: 'supported out of sample', weak: 'weak out of sample → half weight', mixed: 'mixed out of sample → ¾ weight', untested: 'untested' };
   function partsTable(s) {
-    return `<table class="cp-t"><tr><th>Component</th><th>Score</th><th>Weight</th><th>Explanation</th></tr>${s.parts.map(p => `<tr class="${p.missing || !fin(p.score) ? 'muted' : ''}"><td>${esc(p.name)}</td><td>${fin(p.score) && !p.missing ? Math.round(p.score) : 'n/a'}</td><td>${p.weight}</td><td>${esc(p.explain)}</td></tr>`).join('')}</table>`;
+    return `<div class="cp-scroll"><table class="cp-t"><tr><th>Component</th><th>Score</th><th>Weight<br><span class="muted">prior → used</span></th><th>Out-of-sample evidence</th><th>Explanation</th><th>How it is computed (source)</th></tr>${s.parts.map(p => `<tr class="${p.missing || !fin(p.score) ? 'muted' : ''}"><td>${esc(p.name)}</td><td>${fin(p.score) && !p.missing ? Math.round(p.score) : 'n/a'}</td>
+      <td>${p.priorWeight}${p.weight !== p.priorWeight ? ` → <b class="warn">${+p.weight.toFixed(2)}</b>` : ''}</td>
+      <td>${p.evidence ? `${esc(EVS[p.evidence.status] || p.evidence.status)}${fin(p.evidence.testSharpe) ? `<br><span class="muted">${esc(p.evidence.family)}: test Sharpe ${p.evidence.testSharpe.toFixed(2)}, walk-forward ${pc(p.evidence.walkForwardExcess)}/yr, beats ${pu(p.evidence.randomPercentile, 0)} of random</span>` : ''}` : '<span class="muted">n/a</span>'}</td>
+      <td>${esc(p.explain)}</td><td class="muted">${esc(p.calc || '')}${p.source ? ` (${esc(p.source)})` : ''}${p.weightRationale ? `<br>Weight: ${esc(p.weightRationale)}` : ''}</td></tr>`).join('')}</table></div>`;
   }
   function tabOverview(d) {
     const e = d.decision.evidence;
@@ -159,10 +163,18 @@
       <div class="cp-grid2">${list('Unknown or unavailable', e.unknown, 'unk')}${list('Alternative explanations', e.alternatives)}</div>
       <div class="cp-grid2">${list('Assumptions that could be wrong', e.assumptions)}${list('Conditions that would change the conclusion', e.failureConditions)}</div>
       ${list('Variables with the largest effect (DCF)', e.swingVariables)}${list('Model limitations', e.limitations)}
+      ${list('Potential catalysts (estimated dates, not announcements)', (e.catalysts || []).map(c => c.text))}
+      ${scenarioScoreTable(d.decision.scenarios)}
       <details><summary>How the opportunity score is built</summary>${partsTable(d.decision.opportunity)}</details>
       <details><summary>How the risk score is built</summary>${partsTable(d.decision.risk)}</details>
       <details><summary>How the confidence score is built</summary>${partsTable(d.decision.confidence)}<p class="muted">Unmeasurable confidence components count as 0. Scores are rounded to 5 points; finer precision would be false.</p></details>
-      ${d.calibration?.valuation?.n ? `<p class="muted">Calibration: ${esc(calText(d.calibration))}</p>` : ''}`;
+      <p class="muted">${esc(d.decision.method || '')} Validation evidence: see §5 Validation.</p>
+      ${d.calibration?.valuation?.n ? `<p class="muted">Signal calibration (rank IC): ${esc(calText(d.calibration))}</p>` : ''}`;
+  }
+  function scenarioScoreTable(sc) {
+    if (!sc?.length) return '';
+    return `<div class="cp-ev"><h4>Which assumptions change the conclusion <span class="muted">(scenarios rerun every model, then the scores)</span></h4><table class="cp-t"><tr><th>Scenario</th><th>Primary value</th><th>Classification</th><th>Opportunity</th><th>Risk</th></tr>
+      ${sc.map(s => `<tr><td>${esc(s.name)}</td><td>${pc(s.primaryChange, 0)}</td><td class="${s.statusChanged ? 'warn' : ''}">${esc(s.status)}${s.statusChanged ? ' (changes)' : ''}</td><td>${fin(s.scoreChange?.opportunity) ? (s.scoreChange.opportunity > 0 ? '+' : '') + s.scoreChange.opportunity : '–'}</td><td>${fin(s.scoreChange?.risk) ? (s.scoreChange.risk > 0 ? '+' : '') + s.scoreChange.risk : '–'}</td></tr>`).join('')}</table></div>`;
   }
   const calText = c => `cheapness (earnings yield) vs next-3-month return, mean rank IC ${fin(c.valuation.ic) ? c.valuation.ic.toFixed(3) : 'n/a'} (t ${fin(c.valuation.t) ? c.valuation.t.toFixed(1) : 'n/a'}, ${c.valuation.n} quarters ${c.valuation.from}…${c.valuation.to}); 12−1 momentum IC ${fin(c.momentum.ic) ? c.momentum.ic.toFixed(3) : 'n/a'}. ${c.caveats.join(' ')}`;
 
@@ -363,6 +375,7 @@
       ${row('12−1 momentum', d => pc(d.momentum.mom12_1))}${row('Volatility 1y', d => pu(d.volatility.hv252))}${row('Max drawdown 1y', d => pu(d.volatility.maxDrawdown1y))}
       ${row('Traded value / day', d => '$' + big(d.liquidity.addv))}${row('Data completeness', d => pu(d.completeness, 0))}${row('Latest filing', d => esc(d.fresh.filed))}
       ${row('Contradicting evidence', d => d.decision.evidence.contradicting.length + ' items')}</table></div>
+      ${c.correlations?.length ? `<h4>Do they diversify each other?</h4><table class="cp-t"><tr><th>Pair</th><th>Daily return correlation (≈1 year)</th><th>Days</th></tr>${c.correlations.map(x => `<tr><td>${esc(x.a)} / ${esc(x.b)}</td><td>${fin(x.corr) ? x.corr.toFixed(2) : 'n/a'}</td><td>${x.days}</td></tr>`).join('')}</table>` : ''}
       <p class="muted">The three scores are independent and are not combined. The table does not rank or select a company.</p>`;
   }
 

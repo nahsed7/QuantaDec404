@@ -157,3 +157,55 @@ All series are daily bars in the **listing currency**. Market comparisons use th
 - **Test:** rank correlation (IC) between a signal and the next 3-month total return across the US universe. The signals are earnings yield (EPS as known at that date) and 12−1 momentum.
 - **Reported:** mean IC, t-statistic, hit rate, and earlier vs later halves.
 - **Caveats:** survivorship bias (today's universe) and small samples. Part 05 replaces this with full walk-forward validation.
+
+## 6. Decision engine (`lib/decision.js`)
+Three **independent** scores. They are never combined into buy/sell.
+
+### 6.1 Construction
+- **Opportunity and risk components:**
+  - percentile rank within the tracked universe (0–100; at least 10 companies needed);
+  - for risk, higher = riskier;
+  - market-regime risk is absolute: 50 × β × adversity (bear 1.5, bull 0.8; high volatility ×1.3).
+- **Score:** weighted mean of the measured components, rounded to 5. **Withheld** when fewer than 3 components can be measured.
+- **Confidence components:** absolute 0–100. A component that cannot be measured counts as 0.
+- **Interpretation bands:** ≥ 65 high, ≤ 40 low, otherwise moderate.
+  - The brief's example, 86 / 79 / 38, reads "potentially attractive with high risk and low confidence: treat the assessment as highly uncertain".
+
+### 6.2 Prior weights (rationale in `PRIORS`)
+| Score | Component (weight) |
+|---|---|
+| Opportunity | valuation 2 · momentum 1 · quality 1 · relative performance 0.5 · growth 1 · catalysts 0.5 · opportunity cost 1 |
+| Risk | volatility 1 · drawdown 1 · valuation risk 1 · distress 1 · liquidity 0.5 · concentration 1 · model risk 1 · regime 1 |
+| Confidence | completeness 2 · data quality 1 · freshness 1 · model agreement 2 · primary-model confidence 1 · historical signal performance 1 · stability 1 · sensitivity 1 · out-of-sample 1 · range width 1 · coverage 1 |
+
+### 6.3 Evidence caps (from the latest validation experiment, Part 05)
+**Mapping:** valuation → valuation-engine signal; momentum and relative performance → momentum; opportunity cost → value.
+
+| Evidence | Multiplier |
+|---|---|
+| Walk-forward excess > 0.5 %/yr **and** test result beats ≥ 75 % of random portfolios | × 1 |
+| Walk-forward excess ≤ 0.5 %/yr **or** beats < 50 % | × 0.5 |
+| Otherwise | × 0.75 |
+| Untested | × 1, labelled untested |
+
+Weights are only ever **capped**, never raised, so a single lucky test period cannot inflate a component.
+
+### 6.4 Confidence details
+- **Data quality** = 100 − penalties:
+  - share-count conflict 35;
+  - restatements 5 each (at most 25);
+  - stale cache 20;
+  - no local risk-free rate 10;
+  - cover-page share count 10;
+  - no statements 60.
+  - With no data at all, it is unknown.
+- **Historical signal performance:** weighted test-segment percentile against random portfolios.
+- **Out-of-sample:** 50 + 50·tanh(walk-forward excess ÷ 5 %/yr), weighted.
+
+### 6.5 Other outputs
+- **Scenario effects:** each valuation scenario's primary value is fed back into opportunity and risk; the score changes are reported.
+- **Catalysts (estimated, never announced dates):**
+  - next quarterly report = last quarter end + 91 days × k + the median of the last four filing lags;
+  - next ex-dividend date from the median gap between past dividends;
+  - large reported EPS changes.
+- **Comparison:** relative valuation, risk, confidence and data quality; opportunity cost (yield gap, yield vs risk-free); daily-return correlation over about a year. It never selects a company.

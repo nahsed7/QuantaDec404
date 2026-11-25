@@ -301,7 +301,8 @@ const RS = research.create({ dataDir: DATA, quotes: () => lastQuotes });
 RS.wanted = 0;
 // ---- historical validation (Part 05): runs after each research build; identical inputs reuse the stored experiment ----
 const VS = require('./src/validation').create({ dataDir: DATA, research: RS });
-const vsRun = (force) => VS.run({ force }).catch(e => console.error('validation failed:', e.message));
+const vsRun = (force) => VS.run({ force }).then(() => RS.setEvidence(VS.evidence)).catch(e => console.error('validation failed:', e.message));
+RS.setEvidence(VS.evidence);
 const rsBuild = () => RS.build().then(() => vsRun(false)).catch(e => console.error('research build failed:', e.message));
 setTimeout(rsBuild, 2000); setInterval(rsBuild, 6 * 3600e3);
 // Live prices change premiums and scores: refresh every 60 s while someone is looking (full model rerun every 15 min).

@@ -387,9 +387,14 @@ function create({ dataDir, quotes }) {
       const members = ds.filter(d => d.index?.sym === sym), r = R.classify(v.bars, null, uniOf(members));
       st.localRegimes[sym] = { ...r, name: members[0]?.index?.name || sym, members: members.map(m => m.sym) };
     }
-    const universe = { mom12_1: ds.map(d => d.momentum.mom12_1).filter(S.fin), rel63: ds.map(d => d.momentum.relSector63).filter(S.fin) };
-    for (const d of ds) d.decision = D.assess(d, { universe, regime: regimeFor(d), calibration: st.calibration });
+    assessAll(ds);
     st.dossiers = out; st.recomputedAt = st.fullAt = Date.now();
+  }
+  // Decision scores: one universe (for percentile ranks), the local regime, and out-of-sample evidence from Part 05.
+  function assessAll(ds) {
+    const universe = D.universe(ds), evidence = st.evidenceFn?.() || null;
+    for (const d of ds) d.decision = D.assess(d, { universe, regime: regimeFor(d), evidence: evidence || {} });
+    st.evidence = evidence;
   }
   const regimeFor = d => d.index?.sym && d.index.sym !== 'SPY' && st.localRegimes?.[d.index.sym]?.available ? st.localRegimes[d.index.sym] : st.regime;
 
@@ -407,8 +412,7 @@ function create({ dataDir, quotes }) {
       d.momentum = { ...d.momentum, returns: Q.returns(d.bars) };
       d.exhaustion = Q.exhaustion(d.bars, { marketBars, marketName, valuationPremium: d.valuation.synthesis.premium });
     }
-    const universe = { mom12_1: ds.map(d => d.momentum.mom12_1).filter(S.fin), rel63: ds.map(d => d.momentum.relSector63).filter(S.fin) };
-    for (const d of ds) d.decision = D.assess(d, { universe, regime: regimeFor(d), calibration: st.calibration });
+    assessAll(ds);
     st.recomputedAt = Date.now();
   }
   // Called every minute while someone is looking: full recompute every 15 minutes, price refresh otherwise.
@@ -466,7 +470,9 @@ function create({ dataDir, quotes }) {
     return { rows, bal: balT, fund: rows.length ? F.analyse(rows, balT, null, V.STATUTORY_TAX[d.country] ?? 0.25) : null };
   }
   const epsVersionsFor = sym => epsVersions(st.raws?.find(r => r.sym === sym), st.dossiers.get(sym));
-  return { build, recompute, refreshPrices, tick, universeView, company, pit, epsVersionsFor, yahoo, state: st, UNIVERSE, FINANCIAL };
+  // The validation runner (created after this module) supplies out-of-sample evidence; scores are recomputed when it changes.
+  function setEvidence(fn) { st.evidenceFn = fn; if (st.dossiers.size) assessAll([...st.dossiers.values()]); }
+  return { build, recompute, refreshPrices, tick, universeView, company, pit, epsVersionsFor, yahoo, setEvidence, state: st, UNIVERSE, FINANCIAL };
 }
 
 module.exports = { create, UNIVERSE, FINANCIAL, LOCAL_RF, parseYahooChart };
