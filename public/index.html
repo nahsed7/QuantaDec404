@@ -56,12 +56,15 @@
     <label id="hmNL" hidden>Days <input id="hmN" type="number" min="1" max="252" value="10" style="width:60px"></label>
     <label><input type="checkbox" id="hmBorders" checked> valuation borders</label>
     <label><input type="checkbox" id="hmMarkers" checked> range markers</label>
+    <label><input type="checkbox" id="hmFlags" checked> move-vs-value flags</label>
+    <label>Group <select id="hmGroup"></select></label>
+    <label>Region <select id="hmRegion"><option value="all">All</option><option value="US">US</option><option value="International">International</option></select></label>
     <span class="muted">Click a company for research · shift-click to add to a comparison</span>
   </div>
   <div class="hm-tray" id="hmTray" hidden></div>
   <figure class="fig wide">
     <div class="hm-wrap" id="hmWrap"><div class="hm-map" id="hmMap"></div><div class="hm-tip" id="hmTip" hidden></div></div>
-    <figcaption><b>Figure 1.</b> 55 large-cap US equities grouped by sector. <span class="mono" id="hmStatus"></span></figcaption>
+    <figcaption><b>Figure 1.</b> <span id="hmCaption">Large-cap equities.</span> <span class="mono" id="hmStatus"></span></figcaption>
   </figure>
   <div class="hm-legend" id="hmLegend"></div>
   <aside class="hm-panel" id="hmPanel" hidden><button class="btn mini hm-close" id="hmClose" title="Close (Esc)">✕</button><div id="hmPanelBody"></div></aside>
@@ -240,7 +243,7 @@
 </div></div>
 <div class="toast" id="toast"></div>
 <footer class="status mono" id="status"></footer>
-<script src="/lib/stats.js"></script><script src="/lib/treemap.js"></script><script src="/lib/valuation.js"></script><script src="/lib/quant.js"></script><script src="/lib/decision.js"></script>
+<script src="/lib/stats.js"></script><script src="/lib/treemap.js"></script><script src="/lib/encodings.js"></script><script src="/lib/valuation.js"></script><script src="/lib/quant.js"></script><script src="/lib/decision.js"></script>
 <script src="lab.js"></script>
 <script src="app.js"></script>
 <script src="trade.js"></script>

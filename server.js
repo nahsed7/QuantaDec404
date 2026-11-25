@@ -14,7 +14,7 @@ const FUT = 'https://fapi.binance.com';
 
 // Equity universe (ticker, sector, SEC CIK) lives in src/research.js. Market cap now comes from SEC share counts × price.
 const research = require("./src/research");
-const STOCKS = research.UNIVERSE.map(([sym, sector]) => [sym, sector]);
+const STOCKS = research.UNIVERSE.map(u => [u.sym, u.sector]);
 
 const UA = { 'User-Agent': 'Mozilla/5.0' };
 const memo = new Map();
@@ -27,15 +27,22 @@ function cached(key, ttl, fn) {
   memo.set(key, { ...(hit || {}), p });
   return p;
 }
-const getJSON = async (url, opt) => { const r = await fetch(url, opt); if (!r.ok) throw new Error(`${r.status} ${url}`); return r.json(); };
+// Timeout plus one retry: on mobile data a connection attempt can hang (seen with Yahoo) and must not block a refresh.
+const getJSON = async (url, opt = {}) => {
+  for (let i = 0; ; i++) {
+    try { const r = await fetch(url, { ...opt, signal: AbortSignal.timeout(opt.timeout || 15000) }); if (!r.ok) throw Object.assign(new Error(`${r.status} ${url}`), { status: r.status }); return await r.json(); }
+    catch (e) { if (i >= 1 || (e.status >= 400 && e.status < 500 && e.status !== 429)) throw e; await new Promise(r => setTimeout(r, 1000)); }
+  }
+};
 const cleanSym = s => String(s || 'EURUSDT').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
 async function quote(sym) {
-  const m = (await getJSON(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1d`, { headers: UA })).chart.result[0].meta;
+  const m = (await getJSON(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`, { headers: UA })).chart?.result?.[0]?.meta;
+  if (!m || !Number.isFinite(m.regularMarketPrice)) throw new Error('Yahoo quote: unexpected response for ' + sym);
   // Prefer Yahoo's own daily change %; chartPreviousClose can be stale (e.g. after splits)
   const pct = m.regularMarketChangePercent ?? (m.chartPreviousClose ? (m.regularMarketPrice / m.chartPreviousClose - 1) * 100 : 0);
   return { price: m.regularMarketPrice, prev: m.regularMarketPrice / (1 + pct / 100), change: pct,
-           time: m.regularMarketTime * 1000, name: m.shortName || sym, state: m.marketState, volume: m.regularMarketVolume ?? null };
+           time: m.regularMarketTime * 1000, name: m.shortName || sym, state: m.marketState, volume: m.regularMarketVolume ?? null, currency: m.currency || 'USD' };
 }
 
 let lastQuotes = new Map();

@@ -13,44 +13,20 @@
   const KIND = { live: 'live', delayed: 'delayed', historical: 'historical', estimate: 'estimate', simulated: 'simulated' };
   const badge = k => `<span class="kind kind-${k}">${KIND[k] || k}</span>`;
 
-  // ---- what each mapping means (one place, so the legend and tooltips always agree) ----
-  const retFrom = (s, n) => s.closes?.length > n ? s.closes[s.closes.length - 1] / s.closes[s.closes.length - 1 - n] - 1 : null;
-  const COLOR = {
-    d1: { label: '1-day return', get: s => s.change1d, scale: { kind: 'diverging', domain: 0.03 }, fmt: pc, kind: 'delayed', src: 'Yahoo quote vs previous close' },
-    w1: { label: '1-week return', get: s => retFrom(s, 5), scale: { kind: 'diverging', domain: 0.06 }, fmt: pc, kind: 'historical', src: 'Yahoo daily closes (last bar = latest quote)' },
-    m1: { label: '1-month return', get: s => retFrom(s, 21), scale: { kind: 'diverging', domain: 0.12 }, fmt: pc, kind: 'historical', src: 'Yahoo daily closes' },
-    q1: { label: '3-month return', get: s => retFrom(s, 63), scale: { kind: 'diverging', domain: 0.2 }, fmt: pc, kind: 'historical', src: 'Yahoo daily closes' },
-    h1: { label: '6-month return', get: s => retFrom(s, 126), scale: { kind: 'diverging', domain: 0.3 }, fmt: pc, kind: 'historical', src: 'Yahoo daily closes' },
-    y1: { label: '1-year return', get: s => retFrom(s, 252), scale: { kind: 'diverging', domain: 0.5 }, fmt: pc, kind: 'historical', src: 'Yahoo daily closes' },
-    custom: { label: 'Custom period return', get: s => retFrom(s, customN()), scale: { kind: 'diverging', domain: 0.15 }, fmt: pc, kind: 'historical', src: 'Yahoo daily closes' },
-    sector: { label: '3-month return vs sector median', get: s => s.relSector63, scale: { kind: 'diverging', domain: 0.15 }, fmt: pc, kind: 'historical', src: 'Yahoo daily closes, sector = tracked peers' },
-    prem: { label: 'Premium (+) / discount (−) to base valuation', get: s => s.valuation.premium, scale: { kind: 'diverging', domain: 0.6, invert: true }, fmt: pc, kind: 'estimate', src: 'Primary valuation model (estimate)' },
-    histpct: { label: 'P/E percentile in own history', get: s => s.histPercentile, scale: { kind: 'diverging', domain: 1, invert: true, center: 0.5 }, fmt: x => fin(x) ? (100 * x).toFixed(0) + 'th pct' : 'n/a', kind: 'estimate', src: 'SEC EPS and Yahoo month-end prices' },
-    opp: { label: 'Opportunity score', get: s => s.scores.opportunity, scale: { kind: 'sequential', domain: [20, 80] }, fmt: x => fin(x) ? x + '/100' : 'n/a', kind: 'estimate', src: 'Decision engine' },
-    risk: { label: 'Risk score', get: s => s.scores.risk, scale: { kind: 'sequential', domain: [20, 80] }, fmt: x => fin(x) ? x + '/100' : 'n/a', kind: 'estimate', src: 'Decision engine' },
-    conf: { label: 'Confidence score', get: s => s.scores.confidence, scale: { kind: 'sequential', domain: [20, 80] }, fmt: x => fin(x) ? x + '/100' : 'n/a', kind: 'estimate', src: 'Decision engine' },
-    vol: { label: 'Volatility (1 year, annualised)', get: s => s.hv252, scale: { kind: 'sequential', domain: [0.15, 0.6] }, fmt: pu, kind: 'historical', src: 'Yahoo daily closes' },
-    vz: { label: 'Volume anomaly (σ vs 3-month log volume)', get: s => s.volumeZ, scale: { kind: 'diverging', domain: 3 }, fmt: x => fin(x) ? x.toFixed(1) + ' σ' : 'n/a', kind: 'historical', src: 'Yahoo daily volume (today may be partial)' },
-    div: { label: 'Dividend yield (trailing 12 months)', get: s => s.divYield, scale: { kind: 'sequential', domain: [0, 0.05] }, fmt: pu, kind: 'historical', src: 'Yahoo dividend events' },
-    health: { label: 'Financial health (Piotroski F-score)', get: s => s.fscore ? s.fscore.score / s.fscore.of : null, scale: { kind: 'diverging', domain: 1, center: 0.5 }, fmt: (x, s) => s?.fscore ? `${s.fscore.score}/${s.fscore.of}` : 'n/a', kind: 'historical', src: 'SEC 10-K' },
-    mature: { label: 'Momentum maturity (σ from 50-day average)', get: s => s.maturity.distSMA50, scale: { kind: 'diverging', domain: 3 }, fmt: x => fin(x) ? x.toFixed(1) + ' σ' : 'n/a', kind: 'historical', src: 'Yahoo daily closes' },
-    eps: { label: 'Reported EPS, latest quarter vs year ago', get: s => s.epsYoY, scale: { kind: 'diverging', domain: 0.5 }, fmt: pc, kind: 'historical', src: 'SEC 10-Q (reported; analyst revisions unavailable)' },
-  };
-  const SIZE = {
-    cap: { label: 'Market capitalisation', get: s => s.marketCap, fmt: big, src: 'SEC share count × price' },
-    dvol: { label: 'Traded value (median daily $, 1 month)', get: s => s.addv, fmt: x => '$' + big(x), src: 'Yahoo daily bars' },
-    turn: { label: 'Relative liquidity (daily turnover % of shares)', get: s => s.turnover, fmt: x => pu(x, 2), src: 'Yahoo volume ÷ SEC shares' },
-    eq: { label: 'Equal size', get: () => 1, fmt: () => '', src: '' },
-  };
+  // ---- encodings live in /lib/encodings.js (shared with the tests), so tiles, tooltip and legend always agree ----
+  const E = window.QEnc, COLOR = E.COLOR, SIZE = E.SIZE, GROUP = E.GROUP;
   const customN = () => S.clamp(+($('hmN')?.value) || 10, 1, 252);
-  function colourVal(v, sc) { return sc.center != null && fin(v) ? T.colour(v - sc.center, { ...sc, domain: sc.domain / 2 }) : T.colour(v, sc); }
-  const colourFor = (s, key) => colourVal(COLOR[key].get(s), COLOR[key].scale);
-  function scaleEnds(sc) { if (sc.kind !== 'diverging') return sc.domain; const c = sc.center ?? 0, h = sc.center != null ? sc.domain / 2 : sc.domain; return [c - h, c + h]; }
+  const encOpts = () => ({ color: $('hmColor').value, customN: customN(), borders: $('hmBorders').checked, markers: $('hmMarkers').checked, computedAt: st.data?.recomputedAt });
+  const colourVal = E.colourVal, scaleEnds = E.scaleEnds;
+  const kindBadge = (c, s) => badge(E.kindOf(c, s || { fresh: { priceKind: 'delayed' } }));
+  const when = t => fin(t) ? new Date(t).toLocaleString() : 'n/a';
+  const ccyPrice = (s, x = s.price) => fin(x) ? `${num(x)} ${esc(s.ccy || '')}` : 'n/a';
 
   // ---- state ----
   const st = { data: null, sel: null, compare: [], company: new Map(), tab: 'overview' };
   const prefs = (() => { try { return JSON.parse(localStorage.getItem('hm-prefs') || '{}'); } catch { return {}; } })();
-  const savePrefs = () => { try { localStorage.setItem('hm-prefs', JSON.stringify({ size: $('hmSize').value, color: $('hmColor').value, n: $('hmN').value, borders: $('hmBorders').checked, markers: $('hmMarkers').checked })); } catch {} };
+  const savePrefs = () => { try { localStorage.setItem('hm-prefs', JSON.stringify({ size: $('hmSize').value, color: $('hmColor').value, n: $('hmN').value, borders: $('hmBorders').checked, markers: $('hmMarkers').checked, flags: $('hmFlags').checked, group: $('hmGroup').value, region: $('hmRegion').value })); } catch {} };
+  const visible = d => d.stocks.filter(s => $('hmRegion').value === 'all' || (s.region || 'US') === $('hmRegion').value);
 
   async function load() {
     try {
@@ -62,30 +38,30 @@
   function draw() {
     const d = st.data, box = $('hmMap'); if (!d || !box || !box.clientWidth) return;
     regimeStrip(d);
-    const sizeK = $('hmSize').value, colK = $('hmColor').value, sz = SIZE[sizeK];
+    const sizeK = $('hmSize').value, colK = $('hmColor').value, grp = GROUP[$('hmGroup').value] || GROUP.sector, o = encOpts();
     $('hmNL').hidden = colK !== 'custom';
-    const known = d.stocks.map(s => sz.get(s)).filter(x => fin(x) && x > 0), minSize = known.length ? Math.min(...known) : 1;
-    const items = d.stocks.map(s => { const v = sz.get(s); return { ...s, size: fin(v) && v > 0 ? v : minSize, sizeMissing: !(fin(v) && v > 0) }; });
-    const W = box.clientWidth, H = Math.max(420, Math.min(820, Math.round(W * 0.58)));
+    const shown = visible(d), sz = E.sizes(shown, sizeK);
+    const items = shown.map((s, i) => ({ ...s, sector: grp.key(s), realSector: s.sector, ...sz[i] }));
+    const W = box.clientWidth, H = Math.max(420, Math.min(900, Math.round(W * (shown.length > 60 ? 0.7 : 0.58))));
     box.style.height = H + 'px';
     const L = T.layout(items, W, H, 16, 2);
     const html = [];
     for (const g of L.sectors) html.push(`<div class="hm-sector" style="left:${g.x}px;top:${g.y}px;width:${g.w}px;height:${g.h}px">${g.header ? `<span>${esc(g.id)}</span>` : ''}</div>`);
     for (const t of L.tiles) {
-      const c = colourFor(t, colK), status = T.STATUS[t.valuation.status] || T.STATUS.insufficient, v = COLOR[colK].get(t);
-      const border = $('hmBorders').checked && status.colour ? `outline:2px ${status.border} ${status.colour};outline-offset:-3px;` : '';
-      const mk = $('hmMarkers').checked && t.w > 54 && t.h > 38 ? T.marker(t.price, t.valuation) : null;
+      const m = E.tile(t, o), border = m.border ? `outline:2px ${m.border.style} ${m.border.colour};outline-offset:-3px;` : '';
+      const mk = m.marker && t.w > 54 && t.h > 38 ? m.marker : null, flag = $('hmFlags').checked && (m.context.code === 'away' || m.context.code === 'toward') ? m.context.code : '';
       const fs = Math.max(9, Math.min(16, Math.sqrt(t.w * t.h) / 6));
-      html.push(`<button class="hm-tile${c.missing ? ' missing' : ''}${t.sizeMissing ? ' nosize' : ''}${st.compare.includes(t.sym) ? ' cmp' : ''}" data-sym="${esc(t.sym)}" style="left:${t.x}px;top:${t.y}px;width:${t.w}px;height:${t.h}px;${c.fill ? `background:${c.fill};` : ''}${border}font-size:${fs}px">`
-        + (t.w > 28 && t.h > 16 ? `<b>${esc(t.sym)}</b>` : '') + (t.w > 48 && t.h > 30 ? `<i>${esc(COLOR[colK].fmt(v, t))}</i>` : '')
-        + (mk ? `<span class="hm-mk" title="price within valuation range"><span class="r" style="left:${100 * mk.low}%;width:${100 * (mk.high - mk.low)}%"></span>${fin(mk.base) ? `<span class="b" style="left:${100 * mk.base}%"></span>` : ''}<span class="p" style="left:${100 * mk.price}%"></span></span>` : '')
+      html.push(`<button class="hm-tile${m.missing ? ' missing' : ''}${t.sizeMissing ? ' nosize' : ''}${st.compare.includes(t.sym) ? ' cmp' : ''}${flag ? ' ctx-' + flag : ''}" data-sym="${esc(t.sym)}" aria-label="${esc(m.label)}: ${esc(m.valueText)}, ${esc(m.statusLabel)}" style="left:${t.x}px;top:${t.y}px;width:${t.w}px;height:${t.h}px;${m.fill ? `background:${m.fill};` : ''}${border}font-size:${fs}px">`
+        + (t.w > 28 && t.h > 16 ? `<b>${esc(t.w > 70 ? m.label : (t.label || t.sym).slice(0, 8))}</b>` : '') + (t.w > 48 && t.h > 30 ? `<i>${esc(m.valueText)}</i>` : '')
+        + (mk ? `<span class="hm-mk"><span class="r" style="left:${100 * mk.low}%;width:${100 * (mk.high - mk.low)}%"></span>${fin(mk.base) ? `<span class="b" style="left:${100 * mk.base}%"></span>` : ''}<span class="p" style="left:${100 * mk.price}%"></span></span>` : '')
         + '</button>');
     }
     box.innerHTML = html.join('');
     legend(colK, sizeK, d);
-    const err = Object.keys(d.errors || {});
-    $('hmStatus').innerHTML = d.builtAt ? `${d.stocks.length} of ${d.total} companies · research built ${new Date(d.builtAt).toLocaleString()} · prices recomputed ${new Date(d.recomputedAt).toLocaleTimeString()}${err.length ? ` · <span class="warn">failed: ${esc(err.join(', '))}</span>` : ''}`
-      : `Loading research data… ${d.loaded}/${d.total} companies (first load downloads ~15 MB of SEC filings, then caches them for a week).`;
+    const err = Object.keys(d.errors || {}), nIntl = shown.filter(s => s.region === 'International').length, noFil = shown.filter(s => s.hasFilings === false).length;
+    $('hmCaption').textContent = `${shown.length} large companies (${shown.length - nIntl} US, ${nIntl} international${noFil ? `, ${noFil} without a free filings source` : ''}) grouped by ${grp.label.toLowerCase()}.`;
+    $('hmStatus').innerHTML = d.builtAt ? `research built ${new Date(d.builtAt).toLocaleString()} · prices recomputed ${new Date(d.recomputedAt).toLocaleTimeString()}${err.length ? ` · <span class="warn">failed: ${esc(err.join(', '))}</span>` : ''}`
+      : `Loading research data… ${d.loaded}/${d.total} companies (first load downloads ~25 MB of SEC filings, then caches them for a week).`;
   }
 
   function regimeStrip(d) {
@@ -100,34 +76,39 @@
   }
 
   function legend(colK, sizeK, d) {
-    const c = COLOR[colK], sc = c.scale, [lo, hi] = scaleEnds(sc), stops = [];
-    for (let i = 0; i <= 10; i++) stops.push(colourVal(lo + (hi - lo) * i / 10, sc).fill);
+    const c = COLOR[colK], sc = c.scale, [lo, hi] = scaleEnds(sc), stops = E.legendStops(colK).map(x => x.fill);
     $('hmLegend').innerHTML = `
-      <div><b>Colour</b>: ${esc(c.label)} ${badge(c.kind)} <span class="muted">${esc(c.src)}</span>
+      <div><b>Colour</b>: ${esc(c.label)} ${kindBadge(c)} <span class="muted">${esc(c.src)}</span>
         <div class="hm-grad" style="background:linear-gradient(90deg,${stops.join(',')})"></div>
-        <div class="hm-gradl"><span>${esc(c.fmt(lo, null))}${sc.kind === 'diverging' ? ' or less' : ''}</span><span>${sc.invert ? 'expensive ← → cheap' : ''}</span><span>${esc(c.fmt(hi, null))}${sc.kind === 'diverging' ? ' or more' : ''}</span></div>
-        <span class="hm-sw missing"></span> no data for this stock</div>
-      <div><b>Size</b>: ${esc(SIZE[sizeK].label)} <span class="muted">${esc(SIZE[sizeK].src)}</span>. Tiles with <span class="hm-sw nosize"></span> a dashed corner have no value and are drawn at the smallest size.</div>
+        <div class="hm-gradl"><span>${esc(c.fmt(lo, null))}${sc.kind === 'diverging' ? ' or less' : ' or less'}</span><span>${sc.invert ? 'expensive ← → cheap' : ''}</span><span>${esc(c.fmt(hi, null))} or more</span></div>
+        <span class="hm-sw missing"></span> no data for this company (never filled in)</div>
+      <div><b>Size</b>: ${esc(SIZE[sizeK].label)} <span class="muted">${esc(SIZE[sizeK].src)}</span>. <span class="hm-sw nosize"></span> dashed corner = value unavailable, drawn at the smallest size.</div>
       <div><b>Border</b> = price vs estimated valuation range: ${Object.values(T.STATUS).map(s => `<span class="hm-sw" style="${s.colour ? `outline:2px ${s.border} ${s.colour};outline-offset:-3px` : ''}"></span>${esc(s.label)}`).join(' ')}</div>
       <div><b>Marker</b> (larger tiles): <span class="hm-mk demo"><span class="r" style="left:20%;width:55%"></span><span class="b" style="left:45%"></span><span class="p" style="left:85%"></span></span>
         bar = conservative…optimistic valuation, thin line = base, bright tick = current price. An estimate, never an exact fair value.</div>
-      <div class="muted">Data kinds: ${badge('delayed')} quotes (Yahoo, may lag ~15 min) · ${badge('historical')} filings and daily bars · ${badge('estimate')} computed valuations and scores. Nothing on this map is simulated.</div>`;
+      <div><b>Corner flag</b>: <span class="hm-sw ctx-away"></span> today's move (≥ ${(100 * E.FLAT).toFixed(1)} %) takes a price that is already outside the range <i>further away</i> from it ·
+        <span class="hm-sw ctx-toward"></span> <i>back toward</i> it. A +2 % day reads differently above the range than below it. Neither is a forecast, and being below the range does not imply the price will rise.</div>
+      <div class="muted">Data kinds: ${badge('delayed')} quotes (Yahoo, may lag ~15 min) · ${badge('historical')} filings, daily bars, FX and bond yields · ${badge('estimate')} computed valuations and scores · ${badge('simulated')} none on this map.
+        International prices are converted to each company's reporting currency at Yahoo FX rates; sizes are in US$.</div>`;
   }
   // ---- tooltip ----
   function tip(e) {
     const t = e.target.closest('.hm-tile'), el = $('hmTip');
     if (!t) { el.hidden = true; return; }
     const s = st.data.stocks.find(x => x.sym === t.dataset.sym); if (!s) return;
-    const v = s.valuation, colK = $('hmColor').value, c = COLOR[colK], status = T.STATUS[v.status] || T.STATUS.insufficient;
-    el.innerHTML = `<b>${esc(s.sym)}</b> ${esc(s.name)} <span class="muted">${esc(s.sector)}</span><br>
-      Price ${num(s.price)} ${badge(s.fresh?.priceKind?.startsWith('delayed') ? 'delayed' : 'historical')} <span class="muted">${s.fresh?.priceTime ? new Date(s.fresh.priceTime).toLocaleString() : ''}</span><br>
-      ${esc(c.label)}: <b>${esc(c.fmt(c.get(s), s))}</b> ${badge(c.kind)}<br>
-      Valuation ${badge('estimate')}: ${fin(v.base) ? `${num(v.low)} … <b>${num(v.base)}</b> … ${num(v.high)} (${esc(v.primary)}) · ${pc(v.premium, 0)}` : 'n/a'}<br>
-      <span style="color:${status.colour || 'inherit'}">${esc(status.label)}</span><br>
-      Opportunity ${s.scores.opportunity ?? 'n/a'} · Risk ${s.scores.risk ?? 'n/a'} · Confidence ${s.scores.confidence ?? 'n/a'} <span class="muted">(independent)</span><br>
-      <span class="muted">Data completeness ${pu(s.completeness, 0)}${s.dataNotes?.length ? ' · ' + esc(s.dataNotes[0]) : ''} · click for research, shift-click to compare</span>`;
+    const v = s.valuation, o = encOpts(), c = COLOR[o.color], m = E.tile(s, o), a = v.assumptions || {};
+    const conf = fin(v.agreement) ? `${pu(v.agreement, 0)} of other models inside the range` : 'no cross-check model';
+    el.innerHTML = `<b>${esc(s.label || s.sym)}</b> ${esc(s.name !== s.label ? s.name : '')} <span class="muted">${esc(s.sym)} · ${esc(s.sector)} · ${esc(s.country || '')}</span><br>
+      Price ${ccyPrice(s)}${fin(s.nativePrice) && s.listing?.quotedIn !== s.ccy ? ` <span class="muted">(${num(s.nativePrice)} ${esc(s.listing.quotedIn)})</span>` : ''} ${badge(s.fresh?.priceKind?.startsWith('delayed') ? 'delayed' : 'historical')} <span class="muted">${when(s.fresh?.priceTime)}</span><br>
+      ${esc(c.label)}: <b>${esc(m.valueText)}</b> ${badge(m.kind)} <span class="muted">as of ${when(m.asOf)}</span><br>
+      Valuation ${badge('estimate')}: ${fin(v.base) ? `${num(v.low)} … <b>${num(v.base)}</b> … ${num(v.high)} ${esc(s.ccy)} (${esc(v.primaryName || v.primary)}) · price ${pc(v.premium, 0)} vs base` : 'n/a'}<br>
+      <span style="color:${T.STATUS[m.status].colour || 'inherit'}">${esc(m.statusLabel)}</span>${fin(v.base) ? ` <span class="muted">· model confidence: range ×${fin(v.widthRatio) ? v.widthRatio.toFixed(2) : 'n/a'} wide, ${conf}</span>` : ''}<br>
+      ${fin(v.base) && fin(a.discountRate) ? `<span class="muted">Principal assumptions: discount rate ${pu(a.discountRate)}${fin(a.growth) ? `, growth ${pu(a.growth)}` : ''}${fin(a.terminalGrowth) ? `, terminal ${pu(a.terminalGrowth)}` : ''}; risk-free ${pu(s.rf?.value, 2)} (${esc(s.rf?.label || '')})</span><br>` : ''}
+      <i>${esc(m.context.text)}</i><br>
+      Opportunity ${s.scores.opportunity ?? 'n/a'} · Risk ${s.scores.risk ?? 'n/a'} · Confidence ${s.scores.confidence ?? 'n/a'} <span class="muted">(independent, not combined)</span><br>
+      <span class="muted">Data completeness ${pu(s.completeness, 0)}${s.dataNotes?.length ? ' · ' + s.dataNotes.map(esc).join(' · ') : ''} · click for research, shift-click (or long-press) to compare</span>`;
     const r = $('hmWrap').getBoundingClientRect(), x = e.clientX - r.left + 14, y = e.clientY - r.top + 14;
-    el.hidden = false; el.style.left = Math.min(x, r.width - el.offsetWidth - 4) + 'px'; el.style.top = Math.min(y, r.height - el.offsetHeight + 60) + 'px';
+    el.hidden = false; el.style.left = Math.max(0, Math.min(x, r.width - el.offsetWidth - 4)) + 'px'; el.style.top = Math.min(y, r.height - el.offsetHeight + 60) + 'px';
   }
 
   // ---- research panel ----
@@ -148,11 +129,12 @@
   function renderPanel(d) {
     const v = d.valuation.synthesis, status = T.STATUS[v.status] || T.STATUS.insufficient;
     $('hmPanelBody').innerHTML = `
-      <div class="cp-head"><div><h3 class="cp-title">${esc(d.sym)} <span class="muted">${esc(d.name)}</span></h3>
-        <div class="muted">${esc(d.sector)} · price ${num(d.price)} ${badge(d.fresh?.priceKind?.startsWith('delayed') ? 'delayed' : 'historical')} · market cap ${big(d.marketCap)}</div></div>
+      <div class="cp-head"><div><h3 class="cp-title">${esc(d.label || d.sym)} <span class="muted">${esc(d.name)} · ${esc(d.sym)}</span></h3>
+        <div class="muted">${esc(d.sector)} · ${esc(d.region || 'US')}${d.country && d.country !== 'US' ? ' (' + esc(d.country) + ')' : ''} · price ${ccyPrice(d)} ${badge(d.fresh?.priceKind?.startsWith('delayed') ? 'delayed' : 'historical')} · market cap ${big(d.marketCap)} ${esc(d.ccy || '')}${d.ccy !== 'USD' && fin(d.marketCapUSD) ? ` ($${big(d.marketCapUSD)})` : ''}</div>
+        ${d.dataNotes?.length ? `<div class="warn small">${d.dataNotes.map(esc).join('<br>')}</div>` : ''}</div>
         <div><button class="btn mini" id="cpCmp">${st.compare.includes(d.sym) ? '− Remove from compare' : '+ Compare'}</button></div></div>
       <div class="cp-scores">${scoreCard('Opportunity', d.decision.opportunity)}${scoreCard('Risk', d.decision.risk)}${scoreCard('Confidence', d.decision.confidence)}</div>
-      <p class="cp-interp">${esc(d.decision.interpretation)}</p>
+      <p class="cp-interp">${esc(d.decision.interpretation)}</p><p class="muted"><i>${esc(E.moveContext({ ...d, valuation: d.valuation.synthesis }).text)}</i></p>
       <p class="cp-val">Valuation ${badge('estimate')}: ${fin(v.base) ? `conservative <b>${num(v.low)}</b> · base <b>${num(v.base)}</b> · optimistic <b>${num(v.high)}</b> (${esc(modelName(d, v.primary))}) · price ${pc(v.premium, 0)} vs base` : 'no applicable model'}
         · <span style="color:${status.colour || 'inherit'}">${esc(status.label)}</span>${v.notes?.length ? `<br><span class="muted">${v.notes.map(esc).join(' ')}</span>` : ''}</p>
       <nav class="cp-tabs">${TABS.map(([k, l]) => `<button data-tab="${k}" class="${st.tab === k ? 'on' : ''}">${l}</button>`).join('')}</nav>
@@ -186,7 +168,7 @@
 
   // Valuation tab: every model separately, an assumption editor that recomputes in the browser, sensitivity and scenarios.
   const EDIT = [['growth', 'Revenue growth, years 1–5', 'pct'], ['opMargin', 'Operating margin', 'pct'], ['discountRate', 'Discount rate (WACC)', 'pct'], ['costEquity', 'Cost of equity', 'pct'],
-    ['terminalGrowth', 'Terminal growth', 'pct'], ['capexPct', 'Capex, % of revenue', 'pct'], ['eps', 'EPS forecast (per share)', 'num'], ['debt', 'Debt ($)', 'big'], ['cash', 'Cash & investments ($)', 'big']];
+    ['terminalGrowth', 'Terminal growth', 'pct'], ['capexPct', 'Capex, % of revenue', 'pct'], ['eps', 'EPS forecast (per share)', 'num'], ['debt', 'Debt (reporting currency)', 'big'], ['cash', 'Cash & investments (reporting currency)', 'big']];
   function tabValuation(d) {
     const ctx = d.valuation.ctx, a = st.edit, ms = V.runAll(ctx, a), syn = V.synthesize(ms, d.price, ctx), changed = EDIT.some(([k]) => a[k] !== d.valuation.assumptions[k]);
     const scen = V.scenarios(ctx, a), dcf = ms.find(m => m.id === 'dcf');
@@ -310,7 +292,7 @@
       ['Dividend payout of FCF / of net income', `${pu(f.payoutFCF, 0)} / ${pu(f.payoutNI, 0)}`, fin(d.dps) ? `trailing dividend ${num(d.dps)} per share` : 'no dividend'],
       ['Piotroski F-score', f.fscore ? `${f.fscore.score} / ${f.fscore.of} tests` : 'n/a'],
     ])}${list('Deterioration indicators', f.flags, 'con')}
-      <h4>Reported statements (SEC 10-K)</h4><div class="cp-scroll"><table class="cp-t"><tr><th></th>${rows.map(r => `<th>${r.end.slice(0, 7)}</th>`).join('')}</tr>
+      <h4>Reported statements (SEC ${d.region === 'International' ? '20-F / 40-F' : '10-K'}; ${esc(d.ccy || 'USD')})</h4><div class="cp-scroll"><table class="cp-t"><tr><th></th>${rows.map(r => `<th>${r.end.slice(0, 7)}</th>`).join('')}</tr>
       ${cols.map(([k, l]) => `<tr><td>${l}</td>${rows.map(r => `<td>${k === 'eps' ? num(r[k]) : big(r[k])}</td>`).join('')}</tr>`).join('')}</table></div>
       <p class="muted">Quarterly diluted EPS (10-Q): ${d.qEPS.slice(-6).map(q => `${q.end.slice(0, 7)} ${num(q.eps)}`).join(' · ') || 'n/a'}. Analyst estimates and revisions are not available from a free source.</p>`;
   }
@@ -320,8 +302,9 @@
     $('cpTab').innerHTML = `<table class="cp-t"><tr><th>Data</th><th>Source</th><th>Kind</th><th>As of</th></tr>
       <tr><td>Price</td><td>${esc(src.quotes.name)}</td><td>${badge(d.live ? 'delayed' : 'historical')}</td><td>${d.fresh?.priceTime ? new Date(d.fresh.priceTime).toLocaleString() : 'n/a'}</td></tr>
       <tr><td>Daily / monthly prices</td><td>${esc(src.prices.name)}</td><td>${badge('historical')}</td><td>fetched ${new Date(d.fresh.pricesFetched).toLocaleString()}</td></tr>
-      <tr><td>Financial statements</td><td>${esc(src.fundamentals.name)}</td><td>${badge('historical')}</td><td>latest filing ${esc(d.fresh.filed)} · fetched ${new Date(d.fresh.factsFetched).toLocaleString()}</td></tr>
-      <tr><td>Risk-free rate</td><td>${esc(st.data.rf?.source || 'n/a')}</td><td>${badge('historical')}</td><td>${esc(st.data.rf?.date || '')}</td></tr>
+      <tr><td>Financial statements</td><td>${d.hasFilings === false ? '<span class="warn">none: no free source for this company</span>' : esc(d.region === 'International' ? src.internationalFilings.name : src.fundamentals.name)}</td><td>${badge('historical')}</td><td>${d.hasFilings === false ? 'n/a' : `latest filing ${esc(d.fresh.filed)} · fetched ${when(d.fresh.factsFetched)} · reported in ${esc(d.ccy)}`}</td></tr>
+      <tr><td>Risk-free rate (${esc(d.ccy)})</td><td>${esc(d.rfInfo?.source || st.data.rf?.source || 'n/a')}: ${fin(d.rfInfo?.value) ? pu(d.rfInfo.value, 2) : 'n/a'}${d.rfInfo?.fallback ? ' <span class="warn">(fallback: no free local-currency yield)</span>' : ''}</td><td>${badge('historical')}</td><td>${esc(d.rfInfo?.date || '')}</td></tr>
+      ${d.ccy !== 'USD' || d.listing?.ccy !== 'USD' ? `<tr><td>FX</td><td>${esc(st.data.sources.fx?.name || 'Yahoo FX')}: ${[...new Set([d.ccy, d.listing?.ccy])].filter(c => c && c !== 'USD').map(c => `${c}USD ${fin(st.data.fx?.[c]?.last?.c) ? st.data.fx[c].last.c.toPrecision(5) : 'n/a'}`).join(', ')}</td><td>${badge('historical')}</td><td>${[...new Set([d.ccy, d.listing?.ccy])].filter(c => c && c !== 'USD').map(c => when(st.data.fx?.[c]?.last?.t)).join(', ')}</td></tr>` : ''}
       <tr><td>Valuations, scores, regime</td><td>${esc(src.valuation.name)}</td><td>${badge('estimate')}</td><td>${new Date(st.data.recomputedAt).toLocaleString()}</td></tr></table>
       ${list('Data notes', [...(d.dataNotes || []), ...(d.fresh.stale || []).map(s => 'Served from cache because a refresh failed: ' + s)])}
       <p class="muted">XBRL tags used: ${Object.entries(d.tagsUsed).map(([k, v]) => `${esc(k)} ← ${esc(v.join(', '))}`).join('; ')}</p>`;
@@ -375,14 +358,21 @@
     $('hmSize').innerHTML = Object.entries(SIZE).map(([k, c]) => `<option value="${k}">${c.label}</option>`).join('');
     if (prefs.color && COLOR[prefs.color]) $('hmColor').value = prefs.color; else $('hmColor').value = 'd1';
     $('hmSize').value = prefs.size && SIZE[prefs.size] ? prefs.size : 'cap';
-    if (prefs.n) $('hmN').value = prefs.n; if (prefs.borders === false) $('hmBorders').checked = false; if (prefs.markers === false) $('hmMarkers').checked = false;
-    for (const id of ['hmSize', 'hmColor', 'hmN', 'hmBorders', 'hmMarkers']) $(id).addEventListener('change', () => { savePrefs(); draw(); });
+    $('hmGroup').innerHTML = Object.entries(GROUP).map(([k, g]) => `<option value="${k}">${g.label}</option>`).join('');
+    $('hmGroup').value = prefs.group && GROUP[prefs.group] ? prefs.group : 'sector';
+    if (prefs.region) $('hmRegion').value = prefs.region;
+    if (prefs.n) $('hmN').value = prefs.n; if (prefs.borders === false) $('hmBorders').checked = false; if (prefs.markers === false) $('hmMarkers').checked = false; if (prefs.flags === false) $('hmFlags').checked = false;
+    for (const id of ['hmSize', 'hmColor', 'hmN', 'hmBorders', 'hmMarkers', 'hmFlags', 'hmGroup', 'hmRegion']) $(id).addEventListener('change', () => { savePrefs(); draw(); });
+    // Touch: long-press adds to the comparison (there is no shift key on a phone).
+    let press = null;
+    $('hmMap').addEventListener('touchstart', e => { const t = e.target.closest('.hm-tile'); if (!t) return; press = setTimeout(() => { press = 'done'; toggleCompare(t.dataset.sym); }, 550); }, { passive: true });
+    $('hmMap').addEventListener('touchend', e => { if (press === 'done') { e.preventDefault(); } else clearTimeout(press); press = null; });
     $('hmMap').addEventListener('mousemove', tip); $('hmMap').addEventListener('mouseleave', () => { $('hmTip').hidden = true; });
     $('hmMap').addEventListener('click', e => { const t = e.target.closest('.hm-tile'); if (!t) return; if (e.shiftKey) toggleCompare(t.dataset.sym); else { st.tab = st.tab || 'overview'; open(t.dataset.sym); } });
     $('hmClose').onclick = close; document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
     window.addEventListener('resize', () => draw());
     load(); setInterval(() => { if (!document.hidden) load(); }, 30000);
   }
-  window.HEAT = { draw, open, compare: toggleCompare };
+  window.HEAT = { draw, open, compare: toggleCompare, tip };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
