@@ -223,3 +223,10 @@ details summary{cursor:pointer}
 .va-verdict p{margin:.25em 0}
 tr.va-pick td{background:rgba(0,229,255,.08)}
 #vaBoard tr[data-sig]{cursor:pointer}
+/* §6 Portfolio lab */
+.pf-wrap{display:grid;grid-template-columns:minmax(300px,380px) 1fr;gap:14px;align-items:start}
+@media (max-width:900px){.pf-wrap{grid-template-columns:1fr}}
+.pf-builder{border:1px solid var(--grid);border-radius:6px;padding:8px}
+.pf-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0}
+.pf-h input{width:4.5em}
+.pf-cards .cp-score{min-width:120px}

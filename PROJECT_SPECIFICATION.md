@@ -5,7 +5,7 @@ Repository: github.com/nahsed7/QuantaDec404 (MIT). The full nine-part brief is i
 **Status, 2026-11-25:**
 - **Part 01 has been redone from scratch at the user's request**, as a fresh audit of the current code (§2).
 - Parts 02–09 will be implemented one at a time, each with tests, a spec update and its own commit.
-- **Done:** Part 02 heat map (§11), Part 03 valuation and quantitative engines (§12), Part 05 historical validation (§13), Part 04 decision intelligence (§14).
+- **Done:** Part 02 heat map (§11), Part 03 valuation and quantitative engines (§12), Part 05 historical validation (§13), Part 04 decision intelligence (§14), Part 06 portfolio laboratory (§15).
 - The user then sent Parts 04–09 together and added a Part 10 (intuitive visualisation, plus cutting the live-chart delay to 0.1 s or less). They asked for all ten to be completed in order, with the best free choices made automatically and API keys requested once at the end.
 - Order agreed: 03 → 05 → 04 → 06 → 07 → 08 → 09 → 10. Validation comes before the decision-weight rework, so weights can be capped by evidence.
 - Live trading is disabled.
@@ -459,4 +459,47 @@ Price-only companies now show "withheld" rather than a score built on 2 price in
 - Percentile ranks are relative to this universe of 98. A score of 80 means "better than most of these", not good in absolute terms.
 - Untested components (quality, growth, catalysts) rely on priors.
 - Catalyst dates are estimates; no earnings calendar API is used. A Finnhub key, if provided, would add announced dates.
+
+## 15. Part 06: portfolio and opportunity-cost engine (done, 2026-11-25)
+- **Engine:** `lib/portfolio.js` (pure, tested).
+- **Server:** `src/portfolio.js`. Weekly US$ series; saved portfolios in `data/portfolios.json` with a revision check.
+- **View:** §6 **Portfolio lab** (`public/portfolio.js`).
+- **API:** `GET/PUT /api/portfolio`, `POST /api/portfolio/analyze`.
+- **Method:** `docs/MODELS.md` §7.
+
+### 15.1 Brief → implementation
+| Requirement | Implementation |
+|---|---|
+| Existing holdings | Saved portfolios (the "current" one), and the equity paper book from Part 07, which takes precedence once it has positions |
+| Sector concentration, diversification, correlations, volatility, risk contributions | Exposures with Herfindahl; diversification ratio; effective bets and holdings; shrunk correlation matrix; σ; risk contributions vs weights |
+| Capital exposure, liquidity, transaction costs | US$ per holding; currency, region and country exposure; days to exit; build cost |
+| Opportunity cost | Per candidate: price vs value, growth, risk score, confidence, correlation with holdings, Δ portfolio σ, sector weight after, entry cost, cost hurdle per year of holding, yield vs risk-free (the alternative use of capital). Never picks. |
+| Portfolio scenarios | Market decline, sector decline, correlation rise, volatility shock, liquidity deterioration, rates +1 pt |
+| Visualisation | Money vs risk bars, correlation heatmap, stacked concentration bars, look-back vs SPY, tables |
+| Capital allocation research | 6 allocations side by side: σ, diversification, effective bets, max sector, build cost, weighted premium, look-back (marked in-sample) |
+| Hypothetical vs actual | Every output is labelled hypothetical. The look-back is labelled in-sample. No order is ever placed. |
+| Integration with the valuation and decision engines | Assets carry premium, status, growth and the three scores. The rates scenario uses each company's valuation model. Portfolio concentration feeds the risk score's concentration component (re-scored on save). The company panel has a "+ Portfolio candidate" button; the comparison tray can feed candidates. |
+
+### 15.2 Verified on live data
+Example portfolio: AAPL 30 %, MSFT 20 %, TSMC 20 %, Novo 15 %, JPM 15 % (US$ 250 k).
+- **Shape:** 100 weeks; shrinkage 0.22; σ 19.1 %; diversification ratio 1.79; 4.6 effective bets; β 1.10.
+- **Risk vs money:** Novo is 15 % of the money but 23 % of the risk.
+- **Scenarios:** market −20 % → −22 %; correlations halfway to 1 → σ 27.7 %; rates +1 pt → estimated value −13.8 %.
+- **Candidates:** Shell has 0.02 correlation with the holdings and **lowers** σ; NVDA raises it and takes Tech to 72 %.
+- **Speed:** analysis about 130 ms on the phone.
+
+### 15.3 Tests
+- **91 pass**, 10 of them in `test/portfolio.test.js`:
+  - shrinkage bounds, symmetry and its dependence on sample size; refusal with too little data;
+  - risk contributions summing to 1; effective bets = N for equal uncorrelated assets;
+  - closed-form minimum variance; equal risk contributions; inverse-volatility ratio; capped-simplex projection;
+  - exposures, Herfindahl, liquidity days and cost; every scenario's formula;
+  - opportunity-cost direction and hurdle; valuation-tilt ordering; storage validation and revision conflicts.
+- **UI stub:** the Portfolio lab against the live server, 0 errors, 4 charts.
+
+### 15.4 Limitations
+- **Spread estimates** come from daily bars and are biased upward for volatile stocks (NVDA reads about 76 bp; the real spread is about 1 bp). They are replaced when a quote feed is configured (Part 08).
+- **Two years of weekly data** describe the recent regime only.
+- **Scenarios are first-order:** β-linear, no option-like effects, no spill-over between sectors.
+- **US$ is the base currency.** No hedging is modelled.
 

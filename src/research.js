@@ -392,7 +392,8 @@ function create({ dataDir, quotes }) {
   }
   // Decision scores: one universe (for percentile ranks), the local regime, and out-of-sample evidence from Part 05.
   function assessAll(ds) {
-    const universe = D.universe(ds), evidence = st.evidenceFn?.() || null;
+    const universe = D.universe(ds), evidence = st.evidenceFn?.() || null, conc = st.concentrationFn?.() || null;
+    for (const d of ds) { const c = conc ? conc(d.sym) : null; d.concentration = c?.score ?? null; d.concentrationText = c?.text ?? null; }
     for (const d of ds) d.decision = D.assess(d, { universe, regime: regimeFor(d), evidence: evidence || {} });
     st.evidence = evidence;
   }
@@ -472,7 +473,9 @@ function create({ dataDir, quotes }) {
   const epsVersionsFor = sym => epsVersions(st.raws?.find(r => r.sym === sym), st.dossiers.get(sym));
   // The validation runner (created after this module) supplies out-of-sample evidence; scores are recomputed when it changes.
   function setEvidence(fn) { st.evidenceFn = fn; if (st.dossiers.size) assessAll([...st.dossiers.values()]); }
-  return { build, recompute, refreshPrices, tick, universeView, company, pit, epsVersionsFor, yahoo, setEvidence, state: st, UNIVERSE, FINANCIAL };
+  // The portfolio module supplies concentration (sector weight after a hypothetical addition); rescored on change.
+  function setConcentration(fn) { st.concentrationFn = fn; if (st.dossiers.size) assessAll([...st.dossiers.values()]); }
+  return { build, recompute, refreshPrices, tick, universeView, company, pit, epsVersionsFor, yahoo, setEvidence, setConcentration, state: st, UNIVERSE, FINANCIAL };
 }
 
 module.exports = { create, UNIVERSE, FINANCIAL, LOCAL_RF, parseYahooChart };

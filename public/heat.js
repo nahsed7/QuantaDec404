@@ -132,7 +132,7 @@
       <div class="cp-head"><div><h3 class="cp-title">${esc(d.label || d.sym)} <span class="muted">${esc(d.name)} · ${esc(d.sym)}</span></h3>
         <div class="muted">${esc(d.sector)} · ${esc(d.region || 'US')}${d.country && d.country !== 'US' ? ' (' + esc(d.country) + ')' : ''} · price ${ccyPrice(d)} ${badge(d.fresh?.priceKind?.startsWith('delayed') ? 'delayed' : 'historical')} · market cap ${big(d.marketCap)} ${esc(d.ccy || '')}${d.ccy !== 'USD' && fin(d.marketCapUSD) ? ` ($${big(d.marketCapUSD)})` : ''}</div>
         ${d.dataNotes?.length ? `<div class="warn small">${d.dataNotes.map(esc).join('<br>')}</div>` : ''}</div>
-        <div><button class="btn mini" id="cpCmp">${st.compare.includes(d.sym) ? '− Remove from compare' : '+ Compare'}</button></div></div>
+        <div><button class="btn mini" id="cpCmp">${st.compare.includes(d.sym) ? '− Remove from compare' : '+ Compare'}</button> <button class="btn mini" id="cpPort" title="Assess as an addition in the Portfolio lab (§6)">+ Portfolio candidate</button></div></div>
       <div class="cp-scores">${scoreCard('Opportunity', d.decision.opportunity)}${scoreCard('Risk', d.decision.risk)}${scoreCard('Confidence', d.decision.confidence)}</div>
       <p class="cp-interp">${esc(d.decision.interpretation)}</p>${d.regime?.available ? `<p class="muted">Market regime (${esc(d.marketName || 'S&P 500')}): <b>${esc(d.regime.trend)}</b>, volatility ${esc(d.regime.volatility.regime)}, ${pu(d.regime.trendAgreement, 0)} of indicators agree (uncertainty ${esc(d.regime.uncertainty)}).</p>` : ''}<p class="muted"><i>${esc(E.moveContext({ ...d, valuation: d.valuation.synthesis }).text)}</i></p>
       <p class="cp-val">Valuation ${badge('estimate')}: ${fin(v.base) ? `conservative <b>${num(v.low)}</b> · base <b>${num(v.base)}</b> · optimistic <b>${num(v.high)}</b> (${esc(modelName(d, v.primary))}) · price ${pc(v.premium, 0)} vs base` : 'no applicable model'}
@@ -140,6 +140,7 @@
       <nav class="cp-tabs">${TABS.map(([k, l]) => `<button data-tab="${k}" class="${st.tab === k ? 'on' : ''}">${l}</button>`).join('')}</nav>
       <div id="cpTab"></div>`;
     $('cpCmp').onclick = () => { toggleCompare(d.sym); renderPanel(d); };
+    $('cpPort').onclick = async () => { await window.PORT?.go?.(); window.PORT?.addCandidate(d.sym); $('cpPort').textContent = '✓ added to §6 candidates'; };
     $('hmPanelBody').querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { st.tab = b.dataset.tab; renderPanel(d); });
     ({ overview: tabOverview, valuation: tabValuation, history: tabHistory, market: tabMarket, fund: tabFund, sources: tabSources })[st.tab](d);
   }
@@ -401,6 +402,6 @@
     window.addEventListener('resize', () => draw());
     load(); setInterval(() => { if (!document.hidden) load(); }, 30000);
   }
-  window.HEAT = { draw, open, compare: toggleCompare, tip };
+  window.HEAT = { draw, open, compare: toggleCompare, tip, compareList: () => st.compare.slice() };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();

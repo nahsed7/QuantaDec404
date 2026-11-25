@@ -25,6 +25,7 @@
   <button data-v="flow"><span>§3</span> Order flow</button>
   <button data-v="lab"><span>§4</span> Analysis</button>
   <button data-v="valid"><span>§5</span> Validation</button>
+  <button data-v="port"><span>§6</span> Portfolio lab</button>
 </nav>
 
 <div class="controls" id="controls" hidden>
@@ -190,6 +191,11 @@
   <div id="vaNotes" class="muted"></div>
 </section>
 
+<section id="port" class="view">
+  <h2 class="sec-title">Portfolio laboratory <span class="muted">· hypothetical portfolios, risk, diversification and opportunity cost. Nothing here places an order.</span></h2>
+  <div class="pf-wrap"><div id="pfBuilder" class="pf-builder"></div><div id="pfResult" class="pf-result"></div></div>
+</section>
+
 <section id="lab" class="view">
   <h2>§4 Analysis</h2>
   <p class="lede" id="labLede">Computed live from the same sample as §2.</p>
@@ -258,5 +264,5 @@
 <script src="lab.js"></script>
 <script src="app.js"></script>
 <script src="trade.js"></script>
-<script src="heat.js"></script><script src="validation.js"></script>
+<script src="heat.js"></script><script src="validation.js"></script><script src="portfolio.js"></script>
 </body></html>

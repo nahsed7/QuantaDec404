@@ -303,6 +303,9 @@ RS.wanted = 0;
 const VS = require('./src/validation').create({ dataDir: DATA, research: RS });
 const vsRun = (force) => VS.run({ force }).then(() => RS.setEvidence(VS.evidence)).catch(e => console.error('validation failed:', e.message));
 RS.setEvidence(VS.evidence);
+// ---- portfolio laboratory (Part 06) ----
+const PF = require('./src/portfolio').create({ dataDir: DATA, research: RS, holdings: () => null });
+RS.setConcentration(PF.concentration);
 const rsBuild = () => RS.build().then(() => vsRun(false)).catch(e => console.error('research build failed:', e.message));
 setTimeout(rsBuild, 2000); setInterval(rsBuild, 6 * 3600e3);
 // Live prices change premiums and scores: refresh every 60 s while someone is looking (full model rerun every 15 min).
@@ -375,6 +378,17 @@ http.createServer(async (req, res) => {
       }
       case '/api/research/universe': RS.wanted = Date.now(); return json(res, 200, RS.universeView());
       case '/api/research/company': { RS.wanted = Date.now(); const c = RS.company(String(q.get('sym') || '').toUpperCase()); return c ? json(res, 200, c) : json(res, 404, { error: RS.state.builtAt ? 'unknown symbol' : 'research data still loading' }); }
+      case '/api/portfolio': {
+        if (req.method === 'PUT') {
+          let body; try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON' }); }
+          try { const st = PF.save(body, body.rev); RS.setConcentration(PF.concentration); return json(res, 200, st); } catch (e) { return json(res, e.status || 500, { error: e.message }); }
+        }
+        return json(res, 200, PF.get());
+      }
+      case '/api/portfolio/analyze': {
+        let body; try { body = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON' }); }
+        try { return json(res, 200, PF.analyse(body)); } catch (e) { return json(res, e.status || 500, { error: e.message }); }
+      }
       case '/api/validation': {
         if (!VS.state.latest && !VS.state.running && RS.state.builtAt) vsRun(false);
         return json(res, 200, { running: VS.state.running, progress: VS.state.progress, error: VS.state.error, experiment: VS.state.latest });

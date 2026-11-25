@@ -209,3 +209,35 @@ Weights are only ever **capped**, never raised, so a single lucky test period ca
   - next ex-dividend date from the median gap between past dividends;
   - large reported EPS changes.
 - **Comparison:** relative valuation, risk, confidence and data quality; opportunity cost (yield gap, yield vs risk-free); daily-return correlation over about a year. It never selects a company.
+
+## 7. Portfolio engine (`lib/portfolio.js`, `src/portfolio.js`)
+- **Returns:** weekly US$ returns, the last close of each week converted at that day's FX rate, about 2 years. Weekly, not daily, because markets close at different times, which makes daily cross-market correlations falsely low.
+- **Covariance:** Ledoit–Wolf (2004) shrinkage toward a scaled identity, with the intensity estimated from the data. Fewer than 30 periods is refused.
+- **Risk:**
+  - σ_p = √(wᵀΣw · 52);
+  - risk contribution RC_i = w_i(Σw)_i / wᵀΣw, summing to 1;
+  - diversification ratio Σw_iσ_i / σ_p;
+  - effective bets 1/ΣRC_i²; effective holdings 1/Σw_i²;
+  - 1-week parametric VaR 1.645·σ_week.
+- **Allocations** (long-only, fully invested; research only):
+  - equal weight;
+  - inverse volatility;
+  - minimum variance (projected gradient onto the capped simplex, cap 25 %);
+  - equal risk contribution (multiplicative fixed point);
+  - valuation tilt (equal weight × (1 + 0.5·z), z = −standardised log premium, cap 25 %).
+- **Liquidity:** days to exit at ≤ 10 % of daily value. Cost = half-spread + σ_daily·√(min(order, 10 % ADV) ÷ ADV).
+- **Scenarios:**
+  - market −20 % through β (1 if unmeasured);
+  - largest sector −25 %;
+  - correlations ρ′ = ρ + (1−ρ)/2;
+  - σ × 2;
+  - volume −50 % and spreads ×3;
+  - rates +1 pt through each company's own "discount rates +1 pt" valuation scenario.
+- **Look-back** (in-sample, labelled): fixed weights rebalanced every 4 weeks.
+- **Regime exposure:** SPY above or below its 40-week average; 13-week σ vs median, measured to the previous week.
+- **Opportunity cost** of adding a candidate at 5 % (funded pro rata):
+  - correlation with holdings; Δ portfolio σ; sector weight after;
+  - entry cost; round-trip cost ÷ holding years (the hurdle);
+  - yield − risk-free.
+  - It never chooses.
+- **Concentration input to the risk score:** 100 × min(1, sector weight after a hypothetical 5 % addition ÷ 40 %), using the current saved portfolio (or the paper book once it holds equities).
