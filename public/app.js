@@ -67,29 +67,8 @@ function loop(ts) {
 requestAnimationFrame(loop);
 
 /* ======================= §1 equity heatmap ======================= */
-let heatData = null;
-async function loadHeat() {
-  try { heatData = await getJSON('/api/heatmap'); setStatus('quotes', 'ok'); dirty.heat = true; }
-  catch { setStatus('quotes', 'error'); }
-}
-function drawHeat() {
-  if (!heatData) return;
-  const { stocks, updated } = heatData, sectors = [...new Set(stocks.map(s => s.sector))];
-  const ids = ['All', ...sectors, ...stocks.map(s => s.sym)], n0 = 1 + sectors.length, pad = v => Array(n0).fill(v);
-  plot('pHeat', [{
-    type: 'treemap', ids, labels: ids, parents: ['', ...sectors.map(() => 'All'), ...stocks.map(s => s.sector)],
-    values: [...pad(0), ...stocks.map(s => s.cap)], branchvalues: 'remainder',
-    text: [...pad(''), ...stocks.map(s => `${s.change >= 0 ? '+' : ''}${s.change.toFixed(2)}%<br>${fmt(s.price)}`)],
-    customdata: [...pad(''), ...stocks.map(s => `${s.name}<br>last ${fmt(s.price)}  r = ${s.change.toFixed(3)}%<br>prev close ${fmt(s.prev)}<br>${new Date(s.time).toLocaleString()}`)],
-    textinfo: 'label+text', hovertemplate: '%{customdata}<extra></extra>', textfont: { family: 'IBM Plex Mono', color: isDark() ? '#eafff6' : undefined },
-    marker: { colors: [...pad(0), ...stocks.map(s => s.change)], cmid: 0, cmin: -3, cmax: 3, colorscale: divScale(),
-      line: { width: 1, color: css('--bg') }, showscale: true, colorbar: { title: { text: 'r (%)' }, thickness: 10, ticksuffix: '%', tickfont: { color: css('--muted') } } },
-    pathbar: { visible: false }, tiling: { pad: 2 },
-  }], base({ margin: { t: 0, l: 0, r: 0, b: 0 }, uirevision: 1 }));
-  const st = stocks[0]?.state;
-  $('heatMeta').textContent = ` [n = ${stocks.length}; retrieved ${new Date(updated).toLocaleTimeString()}${st ? '; market state ' + st : ''}]`;
-}
-loadHeat(); setInterval(loadHeat, 15000);
+// The heat map lives in heat.js (valuation-integrated research map); this keeps the view switcher working.
+function drawHeat() { window.HEAT?.draw(); }
 
 /* ======================= market data: one combined real-time stream ======================= */
 // kline (authoritative bars) + aggTrade (every trade, updates the forming bar instantly) + bookTicker (every best bid/ask change)

@@ -12,25 +12,9 @@ const PUB = path.join(ROOT, 'public');
 const SPOT = 'https://data-api.binance.vision/api/v3';
 const FUT = 'https://fapi.binance.com';
 
-// Tile size uses approximate market cap ($B, static estimate) — prices/colours are live.
-const STOCKS = [
-  ['AAPL','Technology',3400],['MSFT','Technology',3300],['NVDA','Technology',3500],['AVGO','Technology',900],
-  ['ORCL','Technology',500],['ADBE','Technology',200],['CRM','Technology',280],['AMD','Technology',250],
-  ['INTC','Technology',120],['QCOM','Technology',180],['CSCO','Technology',240],['IBM','Technology',230],
-  ['GOOGL','Communication',2200],['META','Communication',1500],['NFLX','Communication',400],['DIS','Communication',200],
-  ['T','Communication',190],['VZ','Communication',170],
-  ['AMZN','Consumer Cyclical',2200],['TSLA','Consumer Cyclical',1100],['HD','Consumer Cyclical',380],['MCD','Consumer Cyclical',210],
-  ['NKE','Consumer Cyclical',110],['SBUX','Consumer Cyclical',100],
-  ['WMT','Consumer Defensive',750],['COST','Consumer Defensive',420],['PG','Consumer Defensive',380],['KO','Consumer Defensive',290],
-  ['PEP','Consumer Defensive',200],
-  ['JPM','Financials',700],['V','Financials',650],['MA','Financials',500],['BAC','Financials',330],['WFC','Financials',240],
-  ['GS','Financials',200],['MS','Financials',200],['BRK-B','Financials',1000],
-  ['LLY','Healthcare',800],['UNH','Healthcare',300],['JNJ','Healthcare',400],['ABBV','Healthcare',350],['MRK','Healthcare',250],
-  ['PFE','Healthcare',150],['TMO','Healthcare',200],
-  ['XOM','Energy',480],['CVX','Energy',270],['COP','Energy',120],
-  ['CAT','Industrials',200],['GE','Industrials',280],['BA','Industrials',150],['UPS','Industrials',90],['RTX','Industrials',200],
-  ['LIN','Materials',220],['NEE','Utilities',150],['PLD','Real Estate',100],
-];
+// Equity universe (ticker, sector, SEC CIK) lives in src/research.js. Market cap now comes from SEC share counts × price.
+const research = require("./src/research");
+const STOCKS = research.UNIVERSE.map(([sym, sector]) => [sym, sector]);
 
 const UA = { 'User-Agent': 'Mozilla/5.0' };
 const memo = new Map();
@@ -51,16 +35,18 @@ async function quote(sym) {
   // Prefer Yahoo's own daily change %; chartPreviousClose can be stale (e.g. after splits)
   const pct = m.regularMarketChangePercent ?? (m.chartPreviousClose ? (m.regularMarketPrice / m.chartPreviousClose - 1) * 100 : 0);
   return { price: m.regularMarketPrice, prev: m.regularMarketPrice / (1 + pct / 100), change: pct,
-           time: m.regularMarketTime * 1000, name: m.shortName || sym, state: m.marketState };
+           time: m.regularMarketTime * 1000, name: m.shortName || sym, state: m.marketState, volume: m.regularMarketVolume ?? null };
 }
 
+let lastQuotes = new Map();
 const heatmap = () => cached('heat', 10000, async () => {
   const out = [];
   for (let i = 0; i < STOCKS.length; i += 12) {
     const batch = STOCKS.slice(i, i + 12);
     const res = await Promise.allSettled(batch.map(([s]) => quote(s)));
-    res.forEach((r, j) => { const [sym, sector, cap] = batch[j]; if (r.status === 'fulfilled') out.push({ sym, sector, cap, ...r.value }); });
+    res.forEach((r, j) => { const [sym, sector] = batch[j]; if (r.status === 'fulfilled') out.push({ sym, sector, ...r.value }); });
   }
+  lastQuotes = new Map(out.map(q => [q.sym, q]));
   return { updated: Date.now(), stocks: out };
 });
 
@@ -303,6 +289,14 @@ function projectFiles(dir = ROOT, rel = '') {
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' };
 const json = (res, code, v) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(typeof v === 'string' ? v : JSON.stringify(v)); };
 
+// ---- research pipeline (fundamentals, valuation, quant, decision scores) ----
+const RS = research.create({ dataDir: DATA, quotes: () => lastQuotes });
+RS.wanted = 0;
+const rsBuild = () => RS.build().catch(e => console.error('research build failed:', e.message));
+setTimeout(rsBuild, 2000); setInterval(rsBuild, 6 * 3600e3);
+// Live prices change premiums and scores: refresh every 60 s while someone is looking (full model rerun every 15 min).
+setInterval(async () => { if (Date.now() - RS.wanted < 600e3 && !RS.state.building) { try { await heatmap(); RS.tick(); } catch (e) { console.error('research recompute:', e.message); } } }, 60e3);
+
 http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x'), q = url.searchParams;
   try {
@@ -368,14 +362,18 @@ http.createServer(async (req, res) => {
         fs.writeFileSync(ACCT_FILE + '.tmp', JSON.stringify(acctStore)); fs.renameSync(ACCT_FILE + '.tmp', ACCT_FILE);
         return json(res, 200, { rev: acctStore.rev });
       }
+      case '/api/research/universe': RS.wanted = Date.now(); return json(res, 200, RS.universeView());
+      case '/api/research/company': { RS.wanted = Date.now(); const c = RS.company(String(q.get('sym') || '').toUpperCase()); return c ? json(res, 200, c) : json(res, 404, { error: RS.state.builtAt ? 'unknown symbol' : 'research data still loading' }); }
+      case '/api/research/regime': return json(res, 200, { regime: RS.state.regime, calibration: RS.state.calibration, rf: RS.state.rfSource });
       case '/api/fng': return json(res, 200, await fng());
       case '/download': {
         res.writeHead(200, { 'Content-Type': 'application/zip', 'Content-Disposition': 'attachment; filename="market-lab.zip"' });
         return res.end(makeZip(projectFiles()));
       }
     }
-    const file = path.join(PUB, url.pathname === '/' ? 'index.html' : path.normalize(decodeURIComponent(url.pathname)));
-    if (!file.startsWith(PUB)) throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+    const LIB = path.join(ROOT, 'lib'), isLib = url.pathname.startsWith('/lib/');   // shared analytics modules, also used by the browser
+    const file = isLib ? path.join(LIB, path.normalize(decodeURIComponent(url.pathname.slice(5)))) : path.join(PUB, url.pathname === '/' ? 'index.html' : path.normalize(decodeURIComponent(url.pathname)));
+    if (!file.startsWith(isLib ? LIB + path.sep : PUB)) throw Object.assign(new Error('not found'), { code: 'ENOENT' });
     const body = fs.readFileSync(file);
     res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' });
     res.end(body);

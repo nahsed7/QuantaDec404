@@ -48,14 +48,23 @@
 <main>
 <!-- §1 -->
 <section id="heat" class="view on">
-  <h2>§1 Cross-sectional equity returns</h2>
+  <h2>§1 Valuation-integrated market map</h2>
+  <div class="hm-regime" id="hmRegime"></div>
+  <div class="hm-ctl">
+    <label>Size <select id="hmSize"></select></label>
+    <label>Colour <select id="hmColor"></select></label>
+    <label id="hmNL" hidden>Days <input id="hmN" type="number" min="1" max="252" value="10" style="width:60px"></label>
+    <label><input type="checkbox" id="hmBorders" checked> valuation borders</label>
+    <label><input type="checkbox" id="hmMarkers" checked> range markers</label>
+    <span class="muted">Click a company for research · shift-click to add to a comparison</span>
+  </div>
+  <div class="hm-tray" id="hmTray" hidden></div>
   <figure class="fig wide">
-    <div class="plot tall" id="pHeat"></div>
-    <figcaption><b>Figure 1.</b> Treemap of 54 large-cap US equities grouped by GICS-style sector.
-      Colour encodes the session return <i>r</i> = <i>P</i><sub>last</sub>/<i>P</i><sub>prev close</sub> − 1 (clipped at ±3 %);
-      area ∝ approximate market capitalisation (static estimate). Quotes: Yahoo Finance, refreshed every 15 s.
-      <span class="mono" id="heatMeta"></span></figcaption>
+    <div class="hm-wrap" id="hmWrap"><div class="hm-map" id="hmMap"></div><div class="hm-tip" id="hmTip" hidden></div></div>
+    <figcaption><b>Figure 1.</b> 55 large-cap US equities grouped by sector. <span class="mono" id="hmStatus"></span></figcaption>
   </figure>
+  <div class="hm-legend" id="hmLegend"></div>
+  <aside class="hm-panel" id="hmPanel" hidden><button class="btn mini hm-close" id="hmClose" title="Close (Esc)">✕</button><div id="hmPanelBody"></div></aside>
 </section>
 
 <!-- §2 -->
@@ -231,7 +240,9 @@
 </div></div>
 <div class="toast" id="toast"></div>
 <footer class="status mono" id="status"></footer>
+<script src="/lib/stats.js"></script><script src="/lib/treemap.js"></script><script src="/lib/valuation.js"></script><script src="/lib/quant.js"></script><script src="/lib/decision.js"></script>
 <script src="lab.js"></script>
 <script src="app.js"></script>
 <script src="trade.js"></script>
+<script src="heat.js"></script>
 </body></html>
