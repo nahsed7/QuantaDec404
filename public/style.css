@@ -230,3 +230,7 @@ tr.va-pick td{background:rgba(0,229,255,.08)}
 .pf-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0}
 .pf-h input{width:4.5em}
 .pf-cards .cp-score{min-width:120px}
+/* §7 Paper trading */
+.pt-ctx{display:grid;gap:4px;margin-bottom:10px}
+.pt-ticket{border:1px solid var(--grid);border-radius:6px;padding:8px}
+td.neg{color:var(--sell)}td.pos{color:var(--buy)}

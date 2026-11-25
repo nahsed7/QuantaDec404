@@ -5,7 +5,7 @@ Repository: github.com/nahsed7/QuantaDec404 (MIT). The full nine-part brief is i
 **Status, 2026-11-25:**
 - **Part 01 has been redone from scratch at the user's request**, as a fresh audit of the current code (§2).
 - Parts 02–09 will be implemented one at a time, each with tests, a spec update and its own commit.
-- **Done:** Part 02 heat map (§11), Part 03 valuation and quantitative engines (§12), Part 05 historical validation (§13), Part 04 decision intelligence (§14), Part 06 portfolio laboratory (§15).
+- **Done:** Part 02 heat map (§11), Part 03 valuation and quantitative engines (§12), Part 05 historical validation (§13), Part 04 decision intelligence (§14), Part 06 portfolio laboratory (§15), Part 07 trading and execution architecture (§16).
 - The user then sent Parts 04–09 together and added a Part 10 (intuitive visualisation, plus cutting the live-chart delay to 0.1 s or less). They asked for all ten to be completed in order, with the best free choices made automatically and API keys requested once at the end.
 - Order agreed: 03 → 05 → 04 → 06 → 07 → 08 → 09 → 10. Validation comes before the decision-weight rework, so weights can be capped by evidence.
 - Live trading is disabled.
@@ -104,8 +104,8 @@ These were found by reading the code and checking the live data. They are weakne
 7. **The "out-of-sample validation" input to confidence is not out-of-sample** (*fixed in Part 04*: it now uses Part 05 walk-forward and test results). It is the later half of the same calibration sample, with no held-out test and no protection against choosing models after seeing the data.
 8. **Fixed assumptions** (*Part 03*: β, ERP and the risk-free rate are now editable and re-derive the discount rates; the tax fallback is the statutory rate per country). The equity risk premium is a constant 5%. The CAPM beta uses a Blume adjustment. Both are reasonable, but they apply to all stocks and only the browser can override them.
 9. **Liquidity cost model** (*Part 03*: the spread estimator was 2× too high, now fixed; a cost curve is labelled theoretical) (half-spread + σ√(Q/ADV), k = 1). The spread is estimated from daily bars, not quotes; this is never labelled in the UI.
-10. **Paper trading realism.** Fills at the displayed bid or ask, with no fees, financing, slippage, partial fills or rejections.
-11. **No access control.** The server listens on `0.0.0.0` without authentication, so anyone on the hotspot can change the paper account. This must be fixed before Part 07.
+10. **Paper trading realism** (*Part 07*: the equity paper book has spread, impact, partial fills, fees, stops and limits, rejections and sessions; the crypto/FX demo account is unchanged). Fills at the displayed bid or ask, with no fees, financing, slippage, partial fills or rejections.
+11. **No access control** (*fixed in Part 07*: a token is required for every write from another device). The server listens on `0.0.0.0` without authentication, so anyone on the hotspot can change the paper account. This must be fixed before Part 07.
 12. **Two copies of the code** (*done in Part 02*: the live server now runs from the clone, with data copied; `/root/market-site` is kept as a backup). The live server runs from `/root/market-site`. The working clone is `/data/data/com.termux/files/home/QuantaDec404`. Decision: **the clone is canonical**; the server will be moved to run from it.
 13. **Unverified pieces.** `app.py` has not been run, and GeoGebra was only tested with a stub.
 
@@ -191,6 +191,8 @@ None of the free sources permit commercial redistribution. This is a private res
 | 2026-11-25 | Part 03: years 1–5 growth = terminal + 50 % of (historical − terminal); WACC floor = risk-free + 2 pts; statutory tax fallback. |
 | 2026-11-25 | Part 03: market statistics in the listing currency against the local index (16 indices); valuation in the reporting currency. |
 | 2026-11-25 | Part 05: validation on the US universe (point-in-time EPS, total returns); 60/20/20 chronological split; walk-forward 36/12; 10 bp per unit traded; seeded random baselines. |
+| 2026-11-25 | Part 07: the equity paper book lives in its own server-managed file (`data/equity-book.json`), not inside the crypto/FX account file. Working orders must execute without a browser open, and the client overwrites the whole account file on every save. |
+| 2026-11-25 | Part 07: default risk limits 20 % position, 40 % sector, 5 % ADV; no shorting; 5 % daily loss kill switch. Fees: US $0.005/share (min $1, max 1 %); other markets 0.10 % (min $5). |
 | 2026-11-25 | Answers to the open questions, chosen automatically at the user's request: fixed documented weights capped by validation; a stock paper book inside the existing account file; a one-time token for writes; compact tick data older than 30 days. |
 
 ## 8. Questions to the user: answers and decisions
@@ -502,4 +504,54 @@ Example portfolio: AAPL 30 %, MSFT 20 %, TSMC 20 %, Novo 15 %, JPM 15 % (US$ 250
 - **Two years of weekly data** describe the recent regime only.
 - **Scenarios are first-order:** β-linear, no option-like effects, no spill-over between sectors.
 - **US$ is the base currency.** No hedging is modelled.
+
+## 16. Part 07: trading interface and execution architecture (done, 2026-11-25)
+- **Method:** `docs/MODELS.md` §8.
+- **Views:** the company panel's **Trade (paper)** tab (ticket) and §7 **Paper trading** (book).
+- **API:**
+  - `GET /api/paper`, `POST /api/paper/preview`;
+  - `POST /api/paper/order`, `/cancel`, `/reset`; `PUT /api/paper/limits`;
+  - `GET /api/auth`.
+
+### 16.1 Brief → implementation
+| Requirement | Implementation |
+|---|---|
+| Contextual company panel | The ticket shows price (kind and time), valuation range and status, the three scores, liquidity, recent returns, and the top supporting and contradicting evidence |
+| Market, limit and stop orders | Market, limit, stop and stop-limit; day or good-till-cancelled |
+| Position sizing | By shares, US$ amount, % of paper equity, or risk to stop (US$ lost if the stop is hit) |
+| Hypothetical entry and exit, exposure | Buy and sell (no shorting); positions with average cost, unrealised and realised P&L, weights; sector exposure against its limit |
+| Fees, spread, slippage | Fee schedule; estimated or quoted spread; square-root impact; slippage vs last recorded per fill |
+| Execution simulation, not instant | Fills only on quotes newer than the order; partial fills capped at 10 % of interval volume; sessions respected |
+| Rejected and partial fills | Rejections recorded with every reason; partial fills over successive quotes; expiry at session end |
+| Disclosure | A disclosure text on every preview and in the book; each fill notes the delayed quote it used |
+| Six separated layers | See `docs/MODELS.md` §8.3 |
+| Paper only; live disabled unless authorised | No live adapter exists. The Alpaca adapter refuses non-paper URLs. `LIVE_TRADING_ENABLED = false`. |
+| No credentials in source | `.env` only (gitignored), loaded at start, never logged |
+| No automatic trading from signals | Orders come only from an explicit API call made by the two-step ticket (preview → confirm) |
+| Risk controls | Position, concentration, invalid orders, stale data, liquidity, price moves, duplicates, rate, venue health, daily-loss kill switch (`docs/MODELS.md` §8.2) |
+| The user retains control | Explicit confirmation per order; cancel any working order; editable limits; reset |
+
+### 16.2 Verified
+- **Write gate**, tested from the phone's mobile-data address:
+  - without a token, or with a wrong one → 401;
+  - with the token → passes the gate;
+  - reads open; the restore-via-GET path blocked; the token is never returned off-device.
+- **Order flow** on the test server, with real delayed quotes:
+  - preview gives the estimate and checks (US market closed → warning);
+  - resubmitting the same client id → rejected as a duplicate.
+- **Bug found and fixed:** Yahoo's chart endpoint has no `marketState`, so every market looked closed and market orders could never fill. The state is now derived from the exchange's regular trading period, and day orders expire at that session's end.
+
+### 16.3 Tests
+- **106 pass**, 14 of them in `test/execution.test.js`:
+  - no fill on the submission-time quote; spread and impact on both sides; partial-fill cap; limit respected; stop triggers; closed market; fee schedule;
+  - every risk block and warning; duplicates and rate limit;
+  - order manager end to end (fill, cash, fees, position, audit log, holdings); rejection reasons, cancel, expiry;
+  - live disabled; write gate; `.env` loader; session state.
+- **UI stubs:** the ticket inside 11 company panels and the §7 book view, 0 errors.
+
+### 16.4 Limitations
+- **Delayed quotes** (about 15–20 min) mean fills arrive about 15–20 minutes after submission. This is realistic for the data, slow for practice. A real-time feed would need a provider key (Part 08).
+- **Spread estimates** from daily bars overstate costs for mega-caps (AAPL about 24 bp half-spread vs about 1 bp real): conservative.
+- **Lunch breaks and holidays** are not modelled beyond Yahoo's regular session times.
+- **The Alpaca paper adapter** is implemented but not wired into the order manager, and is untested without keys.
 

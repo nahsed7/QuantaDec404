@@ -125,7 +125,7 @@
   }
   function close() { $('hmPanel').hidden = true; document.body.classList.remove('hm-open'); st.sel = null; }
 
-  const TABS = [['overview', 'Assessment'], ['valuation', 'Valuation'], ['history', 'Price & value history'], ['market', 'Market behaviour'], ['fund', 'Fundamentals'], ['sources', 'Sources']];
+  const TABS = [['overview', 'Assessment'], ['valuation', 'Valuation'], ['history', 'Price & value history'], ['market', 'Market behaviour'], ['fund', 'Fundamentals'], ['trade', 'Trade (paper)'], ['sources', 'Sources']];
   function renderPanel(d) {
     const v = d.valuation.synthesis, status = T.STATUS[v.status] || T.STATUS.insufficient;
     $('hmPanelBody').innerHTML = `
@@ -142,7 +142,7 @@
     $('cpCmp').onclick = () => { toggleCompare(d.sym); renderPanel(d); };
     $('cpPort').onclick = async () => { await window.PORT?.go?.(); window.PORT?.addCandidate(d.sym); $('cpPort').textContent = '✓ added to §6 candidates'; };
     $('hmPanelBody').querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { st.tab = b.dataset.tab; renderPanel(d); });
-    ({ overview: tabOverview, valuation: tabValuation, history: tabHistory, market: tabMarket, fund: tabFund, sources: tabSources })[st.tab](d);
+    ({ overview: tabOverview, valuation: tabValuation, history: tabHistory, market: tabMarket, fund: tabFund, trade: tabTrade, sources: tabSources })[st.tab](d);
   }
   const modelName = (d, id) => d.valuation.models.find(m => m.id === id)?.name || id || 'none';
   function scoreCard(name, s) {
@@ -325,6 +325,7 @@
       <p class="muted">Quarterly diluted EPS (10-Q): ${d.qEPS.slice(-6).map(q => `${q.end.slice(0, 7)} ${num(q.eps)}`).join(' · ') || 'n/a'}. Analyst estimates and revisions are not available from a free source.</p>`;
   }
 
+  function tabTrade(d) { if (window.PAPER) window.PAPER.ticket(d, $('cpTab')); else $('cpTab').innerHTML = '<p class="muted">Paper trading module not loaded.</p>'; }
   function tabSources(d) {
     const src = st.data.sources;
     $('cpTab').innerHTML = `<table class="cp-t"><tr><th>Data</th><th>Source</th><th>Kind</th><th>As of</th></tr>

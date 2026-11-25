@@ -241,3 +241,52 @@ Weights are only ever **capped**, never raised, so a single lucky test period ca
   - yield − risk-free.
   - It never chooses.
 - **Concentration input to the risk score:** 100 × min(1, sector weight after a hypothetical 5 % addition ÷ 40 %), using the current saved portfolio (or the paper book once it holds equities).
+
+## 8. Execution and risk controls (`lib/execsim.js`, `lib/riskcontrol.js`, `src/oms.js`, `src/brokers.js`, `src/auth.js`)
+
+### 8.1 Simulated fills (paper venue)
+- **No fill on the displayed price:** only a quote timestamped after submission + 2 s can fill. The free quotes are delayed about 15–20 minutes, so fills typically appear that long after submission.
+- **Prices:**
+  - bid/ask = last × (1 ∓ s/2), with s the quoted spread if available, else the Abdi–Ranaldo estimate clamped to [2 bp, 2 %];
+  - buys pay ask × (1 + σ_d·√(q/ADV)) and sells receive bid × (1 − σ_d·√(q/ADV)).
+- **Partial fills:** at most 10 % of the volume expected since the previous evaluation, ADV pro rata over a 390-minute session, minimum 1 share.
+- **Limit orders:** no fill if the touch is beyond the limit; the quantity is reduced until the impacted price respects the limit.
+- **Stop orders:** trigger on the last price (buy stops at ≥ stop, sell stops at ≤ stop), then behave as market or limit orders.
+- **Sessions:** the market state comes from the exchange's current regular trading period (lunch breaks count as open). Market orders wait while the market is closed. Day orders expire at the regular-session end.
+- **Fees:**
+  - US: $0.005 per share, minimum $1, maximum 1 % of value;
+  - elsewhere: 0.10 %, minimum $5.
+- **Cash and positions in US$:** prices are converted at the current FX rate; the average cost includes fees; realised P&L is tracked; no margin and no short selling.
+
+### 8.2 Pre-trade risk controls (defaults; each configurable except short selling)
+| Control | Block | Warn |
+|---|---|---|
+| Invalid order (side, type, whole shares > 0, limit/stop present, time in force) | always | |
+| Position size after the order | > 20 % of equity | |
+| Sector after the order | > 40 % of equity | |
+| Cash (including cash reserved by working buys) | value > cash | |
+| Liquidity | > 5 % of ADV | > 1 % of ADV |
+| Stale data | quote > 30 min old while open | delayed feed |
+| Price moved since the ticket opened | > 5 % | |
+| Limit/stop distance from last | > 20 % | marketable limit |
+| Duplicate | same client id, or identical order within 10 s | |
+| Rate | > 10 orders a minute | |
+| Daily loss (kill switch) | equity −5 % since the day's first snapshot | |
+| Venue unavailable | always | |
+| Market closed | | always |
+
+### 8.3 Architecture (six separated layers)
+| Layer | Module | Responsibility |
+|---|---|---|
+| Market data | server quotes and research bars | delayed quotes, session times, liquidity inputs |
+| Analytical engine | `src/research.js` | models, quant, regime |
+| Decision engine | `lib/decision.js` | scores only. **No code path leads from a score to an order.** |
+| Risk control | `lib/riskcontrol.js` | pure checks, run at preview and again server-side at submit |
+| Order management | `src/oms.js` | state machine (rejected / working / partially filled / filled / cancelled / expired), server-side book, append-only audit log, daily equity snapshots |
+| Broker adapter | `src/brokers.js` | local paper simulator. The Alpaca adapter accepts only the paper endpoint; live trading is disabled in code. |
+
+### 8.4 Access control and credentials
+- **Writes need a token:** paper orders, cancels, resets, limits, portfolios, the crypto/FX account and its restores, and forced validation runs.
+- **Exception:** requests from the phone itself (loopback) need no token.
+- **Token:** random 128-bit, stored in `data/auth-token`. It is shown only to the phone (in §7 and `server.log`) and used from another device as `?token=` once.
+- **Credentials:** only from `.env` (gitignored) or the environment; never in source, logs or responses.

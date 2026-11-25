@@ -36,13 +36,14 @@ const getJSON = async (url, opt = {}) => {
 };
 const cleanSym = s => String(s || 'EURUSDT').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
+const { session } = require('./lib/execsim');   // market state from Yahoo's trading periods (tested)
 async function quote(sym) {
   const m = (await getJSON(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`, { headers: UA })).chart?.result?.[0]?.meta;
   if (!m || !Number.isFinite(m.regularMarketPrice)) throw new Error('Yahoo quote: unexpected response for ' + sym);
   // Prefer Yahoo's own daily change %; chartPreviousClose can be stale (e.g. after splits)
   const pct = m.regularMarketChangePercent ?? (m.chartPreviousClose ? (m.regularMarketPrice / m.chartPreviousClose - 1) * 100 : 0);
   return { price: m.regularMarketPrice, prev: m.regularMarketPrice / (1 + pct / 100), change: pct,
-           time: m.regularMarketTime * 1000, name: m.shortName || sym, state: m.marketState, volume: m.regularMarketVolume ?? null, currency: m.currency || 'USD' };
+           time: m.regularMarketTime * 1000, name: m.shortName || sym, volume: m.regularMarketVolume ?? null, currency: m.currency || 'USD', ...session(m.currentTradingPeriod) };
 }
 
 let lastQuotes = new Map();
@@ -77,6 +78,11 @@ const sentiment = (sym, iv) => cached(`sent:${sym}:${iv}`, 60000, async () => {
 // quote-currency depth within ±10 bp of mid. Persisted to data/<SYM>.jsonl so it survives restarts.
 const BOOK_BAND = 0.001, BOOK_EVERY = 3000, BOOK_KEEP = 30000;
 const DATA = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, 'data');   // DATA_DIR lets tests use a separate folder
+fs.mkdirSync(DATA, { recursive: true });
+// Credentials (API keys) only from .env (gitignored) or the environment; never from source code, never logged.
+const { create: authCreate, loadEnv } = require('./src/auth');
+loadEnv(path.join(ROOT, '.env'));
+const AUTH = authCreate(DATA);
 const books = new Map();
 function bookRecorder(sym, pinned = false) {
   let b = books.get(sym);
@@ -304,7 +310,15 @@ const VS = require('./src/validation').create({ dataDir: DATA, research: RS });
 const vsRun = (force) => VS.run({ force }).then(() => RS.setEvidence(VS.evidence)).catch(e => console.error('validation failed:', e.message));
 RS.setEvidence(VS.evidence);
 // ---- portfolio laboratory (Part 06) ----
-const PF = require('./src/portfolio').create({ dataDir: DATA, research: RS, holdings: () => null });
+// ---- equity paper trading (Part 07): risk controls → order manager → broker adapter (paper only) ----
+const BROKERS = require('./src/brokers'), BROKER = BROKERS.paper();
+async function fetchQuotes(syms) {                       // quotes for symbols with working orders, even when nobody is viewing
+  const res = await Promise.allSettled(syms.map(s => quote(s)));
+  res.forEach((r, i) => { if (r.status === 'fulfilled') lastQuotes.set(syms[i], { sym: syms[i], ...r.value }); });
+}
+const OMS = require('./src/oms').create({ dataDir: DATA, research: RS, quotes: () => lastQuotes, fetchQuotes, broker: BROKER });
+setInterval(() => OMS.tick().catch(e => console.error('order manager:', e.message)), 30e3);
+const PF = require('./src/portfolio').create({ dataDir: DATA, research: RS, holdings: () => OMS.holdings() });
 RS.setConcentration(PF.concentration);
 const rsBuild = () => RS.build().then(() => vsRun(false)).catch(e => console.error('research build failed:', e.message));
 setTimeout(rsBuild, 2000); setInterval(rsBuild, 6 * 3600e3);
@@ -313,8 +327,19 @@ setInterval(async () => { if (Date.now() - RS.wanted < 600e3 && !RS.state.buildi
 
 http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x'), q = url.searchParams;
+  // Write gate: every state-changing request needs the access token unless it comes from the phone itself.
+  const READ_ONLY_POST = new Set(['/api/portfolio/analyze', '/api/paper/preview']);
+  const writes = (req.method !== 'GET' && req.method !== 'HEAD' && !READ_ONLY_POST.has(url.pathname)) || (url.pathname === '/api/account/history' && q.has('restore')) || (url.pathname === '/api/validation/run' && q.get('force') === '1');
+  if (writes && !AUTH.allowed(req)) return json(res, 401, { error: 'read-only: open this page with ?token=… (shown on the phone, Paper trading tab) to make changes' });
   try {
     switch (url.pathname) {
+      case '/api/auth': return json(res, 200, { canWrite: AUTH.allowed(req), loopback: AUTH.loopback(req), token: AUTH.loopback(req) ? AUTH.token() : undefined });
+      case '/api/paper': return json(res, 200, OMS.view());
+      case '/api/paper/preview': { let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON' }); } const p = OMS.preview(b); return json(res, p.error ? 400 : 200, p); }
+      case '/api/paper/order': { let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON' }); } const o = OMS.submit(b); return json(res, o.status === 'rejected' ? 422 : 201, o); }
+      case '/api/paper/cancel': { let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON' }); } const o = OMS.cancel(String(b.id || '')); return json(res, o.error ? 400 : 200, o); }
+      case '/api/paper/reset': { let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON' }); } return json(res, 200, OMS.reset(b.cash)); }
+      case '/api/paper/limits': { let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON' }); } return json(res, 200, OMS.setLimits(b)); }
       case '/api/heatmap': return json(res, 200, await heatmap());
       case '/api/trades': {           // recent real trades (seed for the order-flow view)
         const r = await fetch(`${SPOT}/aggTrades?symbol=${cleanSym(q.get('symbol'))}&limit=1000`);
@@ -415,6 +440,7 @@ http.createServer(async (req, res) => {
   }
 }).listen(PORT, '0.0.0.0', () => {
   console.log(`Market Microstructure Laboratory\n  this device:  http://localhost:${PORT}`);
+  console.log(`  write access from another device: add ?token=${AUTH.token()} to the address once`);
   for (const [name, nets] of Object.entries(os.networkInterfaces()))
     for (const n of nets || []) if (n.family === 'IPv4' && !n.internal) console.log(`  other device: http://${n.address}:${PORT}   [${name}${/^(swlan|ap)/.test(name) ? ' = phone hotspot' : /^wlan/.test(name) ? ' = Wi-Fi' : /^rmnet/.test(name) ? ' = mobile data, not reachable' : ''}]`);
 });
