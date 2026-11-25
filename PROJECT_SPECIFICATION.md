@@ -358,7 +358,7 @@ The formulas, inputs, assumptions and limitations of every module are in **`docs
 - **SMFG:** ROE from XBRL (2.9 %) looks implausibly low and the share counts conflict, so it is flagged and withheld.
 - **BP:** no EPS or share counts in its XBRL at all, so it remains "insufficient".
 - **β and ERP in valuation history** are today's values. No free point-in-time β exists.
-- **Spread estimates** come from daily bars, not quotes: about 0.8 % against a true 1 % on synthetic data.
+- **Spreads:** daily-bar estimators proved unreliable for liquid stocks (see Part 08 §17). Costs now use a documented liquidity-tier model, and quoted spreads replace it when a quote feed is configured.
 
 ## 13. Part 05: historical validation and overfitting protection (done, 2026-11-25)
 Engine `lib/backtest.js` (pure, tested); runner `src/validation.js`; view §5 **Validation** (`public/validation.js`). API: `/api/validation`, `/api/validation/run?force=1`, `/api/validation/experiments`, `/api/validation/experiment?id=`.
@@ -500,7 +500,7 @@ Example portfolio: AAPL 30 %, MSFT 20 %, TSMC 20 %, Novo 15 %, JPM 15 % (US$ 250
 - **UI stub:** the Portfolio lab against the live server, 0 errors, 4 charts.
 
 ### 15.4 Limitations
-- **Spread estimates** come from daily bars and are biased upward for volatile stocks (NVDA reads about 76 bp; the real spread is about 1 bp). They are replaced when a quote feed is configured (Part 08).
+- **Spreads** use the liquidity-tier model (Part 08 §17), an assumption until a quote feed is configured.
 - **Two years of weekly data** describe the recent regime only.
 - **Scenarios are first-order:** β-linear, no option-like effects, no spill-over between sectors.
 - **US$ is the base currency.** No hedging is modelled.
@@ -551,7 +551,30 @@ Example portfolio: AAPL 30 %, MSFT 20 %, TSMC 20 %, Novo 15 %, JPM 15 % (US$ 250
 
 ### 16.4 Limitations
 - **Delayed quotes** (about 15–20 min) mean fills arrive about 15–20 minutes after submission. This is realistic for the data, slow for practice. A real-time feed would need a provider key (Part 08).
-- **Spread estimates** from daily bars overstate costs for mega-caps (AAPL about 24 bp half-spread vs about 1 bp real): conservative.
+- **Spreads** use the liquidity-tier model (2–50 bp by daily traded value), an assumption until quoted spreads are available.
 - **Lunch breaks and holidays** are not modelled beyond Yahoo's regular session times.
 - **The Alpaca paper adapter** is implemented but not wired into the order manager, and is untested without keys.
+
+## 17. Part 08: data infrastructure and interface (IN PROGRESS, 2026-11-25)
+**Done and committed:**
+- **Provider layer** (`src/providers.js`): registry with licence notes and live health for every source. Frankfurter (ECB) is the FX fallback. Stooq was rejected (bot challenge). New sources: SEC submissions (SIC codes and filings as announcements) and FRED macro.
+- **Retention:** market recordings older than 30 days are compacted daily (`src/retention.js`).
+- **Monitors** (`src/monitor.js`): data quality, model performance, and a **prospective log** (daily, recorded before outcomes are known).
+- **APIs:** `/api/monitor/data`, `/api/monitor/models`, `/api/macro`, `/api/research/filings`.
+- **New sections:** Valuation explorer, Company research directory, Quant screen, Risk lab, Data quality, Model performance; layout manager (`public/workstation.js`).
+- **Spread model:** daily-bar estimators proved unreliable for liquid stocks (NVDA 3 %, Toyota 1.5 %), so costs use a liquidity-tier model (2–50 bp by US$ daily value, an assumption). Quoted spreads replace it when available.
+- **Tests:** 108 pass.
+
+**Verified:**
+- A live paper fill: Toyota, 100 shares at ¥3,434.39 ($21.56) on a quote newer than the order, $5 fee; cash debited exactly.
+- Providers, macro and filings endpoints work live.
+
+**Not yet done:**
+- Stub-DOM test of the six new sections.
+- Tests for providers, retention and monitors.
+- Finnhub and Alpaca adapters (waiting for keys).
+
+**Remaining parts:**
+- Part 09: full test suite and final documentation (architecture, setup, dependencies, providers, testing report, feature matrix, paper-trading guide).
+- Part 10: intuitive visualisation, plus cutting the live-chart delay from about 0.4 s to 0.1 s or less.
 

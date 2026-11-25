@@ -96,7 +96,7 @@
       <h4>Exposure by market regime <span class="muted">(regime known at the time; hypothetical, in-sample)</span></h4>
       <table class="cp-t"><tr><th>Regime</th><th>Weeks</th><th>Return / yr</th><th>Volatility</th></tr>${(a.regimes || []).map(x => `<tr><td>${esc(x.regime)}</td><td>${x.periods}</td><td>${pc(x.annReturn)}</td><td>${pu(x.annVol)}</td></tr>`).join('')}</table>
       <h4>Liquidity and cost to build</h4><table class="cp-t"><tr><th>Holding</th><th>US$</th><th>Days to exit</th><th>Cost</th></tr>${liq.map(x => `<tr><td>${esc(x.sym)}</td><td>${usd(x.usd)}</td><td>${nf(x.daysToExit, 2)}</td><td>${fin(x.costBp) ? x.costBp.toFixed(1) + ' bp · ' + usd(x.costUSD) : 'n/a'}</td></tr>`).join('')}</table>
-      <p class="muted">Costs = half the spread (estimated from daily high/low/close; this estimate is biased upward for very volatile stocks) + square-root market impact. Quoted spreads would replace the estimate when a quote feed is configured.</p>
+      <p class="muted">Costs = half the spread (liquidity-tier model by daily traded value, an assumption; quoted spreads replace it when a quote feed is configured) + square-root market impact.</p>
       ${a.opportunity.length ? oppTable(a) : '<p class="muted">Add candidates to see what adding each one would do to this portfolio.</p>'}`;
     charts(a);
   }

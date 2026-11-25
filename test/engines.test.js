@@ -118,6 +118,13 @@ test('spread estimator (Abdi–Ranaldo) recovers a known 1 % bid–ask bounce wi
     bars.push({ t: i * DAY, o: px[0], h: Math.max(...px), l: Math.min(...px), c: px[49], v: 1e6 }); }
   const est = Q.liquidity(bars, {}).spreadEst; assert.ok(est > 0.006 && est < 0.014, `estimate ${est}`);
 });
+test('spread estimator does not overstate a tight (3 bp) spread; costs floor it at 2 bp', () => {
+  const u = S.rng(7); let p = 100; const bars = [];
+  for (let i = 0; i < 300; i++) { const px = []; for (let k = 0; k < 50; k++) { p *= Math.exp(0.002 * (u() - 0.5)); px.push(p * (1 + (u() < 0.5 ? -0.00015 : 0.00015))); }
+    bars.push({ t: i * DAY, o: px[0], h: Math.max(...px), l: Math.min(...px), c: px[49], v: 1e6 }); }
+  const l = Q.liquidity(bars, {}); assert.ok(l.spreadEst < 0.001, `estimate ${l.spreadEst}`);
+  const c = Q.tradeCost({ ...l, addv: 1e9, sigmaDaily: 0.01 }, 1e4); assert.ok(c.halfSpread >= 0.0001 - 1e-12);
+});
 test('cost curve: cost rises with order size; orders above 10 % of daily value are flagged', () => {
   const curve = Q.costCurve({ available: true, addv: 1e7, sigmaDaily: 0.02, spreadEst: 0.001 }, [1e4, 1e5, 1e6, 5e6]);
   for (let i = 1; i < curve.length; i++) assert.ok(curve[i].bp > curve[i - 1].bp);
@@ -129,4 +136,10 @@ test('relative-strength divergence: a new price high while lagging the index is 
   const x = Q.exhaustion(stk, { marketBars: idx });
   assert.equal(x.rsDivergence, 'bearish'); assert.ok(x.signals.some(s => /Relative-strength bearish/.test(s)));
   assert.equal(Q.exhaustion(stk, {}).rsDivergence, null);                     // no index → not computed, not guessed
+});
+test('liquidity-tier spread model: tighter for more traded value; used by trade costs ahead of the daily-bar estimate', () => {
+  assert.equal(Q.spreadTier(5e9), 0.0002); assert.equal(Q.spreadTier(3e8), 0.0004); assert.equal(Q.spreadTier(6e7), 0.0008); assert.equal(Q.spreadTier(2e7), 0.002); assert.equal(Q.spreadTier(1e6), 0.005); assert.equal(Q.spreadTier(null), null);
+  const c = Q.tradeCost({ available: true, addv: 5e9, sigmaDaily: 0.02, spreadEst: 0.03, spreadModel: 0.0002 }, 1e5);
+  close(c.halfSpread, 0.0001); assert.equal(c.spreadSource, 'liquidity-tier model');
+  assert.equal(Q.tradeCost({ available: true, addv: 5e9, sigmaDaily: 0.02, quotedSpread: 0.0004, spreadModel: 0.0002 }, 1e5).spreadSource, 'quoted');
 });

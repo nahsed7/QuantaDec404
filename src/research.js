@@ -80,7 +80,8 @@ function parseYahooChart(j) {
   return { fetched: Date.now(), currency: ccy, quotedIn: r.meta.currency, tz: r.meta.exchangeTimezoneName, bars, div, splits };
 }
 
-function create({ dataDir, quotes }) {
+function create({ dataDir, quotes, providers }) {
+  const net = providers?.tracked || fetch;            // every request is recorded by the provider layer (Part 08)
   const dir = path.join(dataDir, 'research'); fs.mkdirSync(dir, { recursive: true });
   const st = { started: Date.now(), loaded: 0, errors: {}, building: false, builtAt: null, dossiers: new Map(), regime: null, calibration: null, rf: null, market: null, vix: null };
 
@@ -96,7 +97,7 @@ function create({ dataDir, quotes }) {
     let last;
     for (let i = 0; i < tries; i++) {
       try {
-        const r = await fetch(url, { headers, signal: AbortSignal.timeout(timeout) });
+        const r = await net(url, { headers, signal: AbortSignal.timeout(timeout) });
         if (r.status === 404) throw Object.assign(new Error(`HTTP 404 ${url.replace(/\?.*/, '')}`), { final: true });
         if (!r.ok) throw new Error(`HTTP ${r.status} ${url.replace(/\?.*/, '')}`);
         return as === 'text' ? await r.text() : await r.json();
@@ -116,9 +117,17 @@ function create({ dataDir, quotes }) {
     parseChart(await getJSON(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=${iv}&range=${range}&events=div%2Csplit`, YH_UA)));
   // Yahoo FX: USD per unit of `ccy`; 10 years monthly joined to 5 years daily.
   const fxSeries = async ccy => {
-    const [m, d] = await Promise.all([yahoo(`${ccy}USD=X`, '1mo', '10y', 7 * DAY), yahoo(`${ccy}USD=X`, '1d', '5y', 12 * 3600e3)]);
-    const t0 = d.bars[0]?.t ?? Infinity;
-    return { ccy, series: [...m.bars.filter(b => b.t < t0), ...d.bars].map(b => ({ t: b.t, c: b.c })), fetched: d.fetched, stale: [m._stale, d._stale].filter(Boolean) };
+    try {
+      const [m, d] = await Promise.all([yahoo(`${ccy}USD=X`, '1mo', '10y', 7 * DAY), yahoo(`${ccy}USD=X`, '1d', '5y', 12 * 3600e3)]);
+      const t0 = d.bars[0]?.t ?? Infinity;
+      return { ccy, series: [...m.bars.filter(b => b.t < t0), ...d.bars].map(b => ({ t: b.t, c: b.c })), fetched: d.fetched, stale: [m._stale, d._stale].filter(Boolean), source: 'Yahoo' };
+    } catch (e) {
+      // Fallback: ECB reference rates via Frankfurter (daily; no TWD). Cached like any other source.
+      if (!providers) throw e;
+      const fb = await cachedFile(`fxfb-${ccy}.json`, 12 * 3600e3, async () => ({ fetched: Date.now(), series: await providers.frankfurterUSDPer(ccy, new Date(Date.now() - 10 * 365 * DAY).toISOString().slice(0, 10)) }));
+      if (!fb.series?.length) throw e;
+      return { ccy, series: fb.series, fetched: fb.fetched, stale: [fb._stale].filter(Boolean), source: 'Frankfurter (ECB) fallback after Yahoo failed: ' + e.message };
+    }
   };
   const fred = id => cachedFile(`fred-${id}.json`, 24 * 3600e3, async () => {
     const txt = await getRaw(`https://fred.stlouisfed.org/graph/fredgraph.csv?id=${id}`, YH_UA, { as: 'text' });
@@ -276,6 +285,7 @@ function create({ dataDir, quotes }) {
   function liquidityUSD(p) {
     const l = Q.liquidity(p.bars, { shares: p.shares });
     if (p.listing.ccy !== 'USD' && l.available) { const k = p.fxListUSD; l.addvLocal = l.addv; l.addv = S.fin(k) ? l.addv * k : null; l.amihud = S.fin(k) && S.fin(l.amihud) ? l.amihud / k : null; }
+    if (l.available) { l.spreadModel = Q.spreadTier(l.addv); l.spreadUsed = S.fin(l.quotedSpread) ? l.quotedSpread : l.spreadModel; l.spreadSource = S.fin(l.quotedSpread) ? 'quoted' : 'liquidity-tier model (assumption)'; }
     return l;
   }
 
@@ -349,7 +359,7 @@ function create({ dataDir, quotes }) {
       const ccys = [...new Set(raws.flatMap(r => [r.daily.currency, r.cf?.currency]).filter(c => c && c !== 'USD'))];
       const fx = await Promise.allSettled(ccys.map(fxSeries));
       st.fx = {}; st.fxInfo = {};
-      fx.forEach((r, i) => { if (r.status === 'fulfilled' && r.value.series.length) { st.fx[ccys[i]] = r.value.series; st.fxInfo[ccys[i]] = { pair: ccys[i] + 'USD=X', last: r.value.series.at(-1), fetched: r.value.fetched, stale: r.value.stale }; delete st.errors['FX ' + ccys[i]]; } else st.errors['FX ' + ccys[i]] = String(r.reason?.message || 'no data'); });
+      fx.forEach((r, i) => { if (r.status === 'fulfilled' && r.value.series.length) { st.fx[ccys[i]] = r.value.series; st.fxInfo[ccys[i]] = { pair: ccys[i] + 'USD=X', last: r.value.series.at(-1), fetched: r.value.fetched, stale: r.value.stale, source: r.value.source }; delete st.errors['FX ' + ccys[i]]; } else st.errors['FX ' + ccys[i]] = String(r.reason?.message || 'no data'); });
       const rc = [...new Set(raws.flatMap(r => [r.cf?.currency, r.daily.currency]).filter(c => c && LOCAL_RF[c]))];
       const yl = await Promise.allSettled(rc.map(c => fred(LOCAL_RF[c])));
       st.localRf = {}; yl.forEach((r, i) => { if (r.status === 'fulfilled') st.localRf[rc[i]] = r.value.rows; else st.errors['Yield ' + rc[i]] = String(r.reason?.message); });
@@ -429,6 +439,7 @@ function create({ dataDir, quotes }) {
       fscore: f.fscore, debtToEbitda: f.debtToEbitda, interestCover: f.interestCover, flags: f.flags, epsYoY: d.epsYoY,
       maturity: { trendR2: m.trendR2, distSMA50: x.distSMA50, ret21Pct: x.ret21Pct, exhaustion: x.count ?? null, direction: x.direction ?? null },
       relSector63: m.relSector63 ?? null, closes: d.bars.slice(-253).map(b => +b.c.toPrecision(6)),
+      quant: { mom12_1: m.mom12_1 ?? null, relMarket63: m.relMarket63 ?? null, beta: vo.beta ?? null, betaVs: vo.betaVs ?? null, maxDD1y: vo.maxDrawdown1y ?? null, rsi: x.rsi ?? null, rsDivergence: x.rsDivergence ?? null, volExpansion: x.volExpansion ?? null },
       valuation: { low: v.low, base: v.base, high: v.high, premium: v.premium, status: v.status, primary: v.primary, primaryName: d.valuation.models.find(x => x.id === v.primary)?.name || null,
         widthRatio: v.widthRatio, dispersion: v.dispersion, agreement: v.agreement, models: v.models, notes: v.notes,
         assumptions: { discountRate: a.discountRate, costEquity: a.costEquity, growth: a.growth, terminalGrowth: a.terminalGrowth, opMargin: a.opMargin, rf: a.rf, erp: a.erp, beta: a.beta } },
@@ -439,6 +450,7 @@ function create({ dataDir, quotes }) {
   function universeView() {
     return { builtAt: st.builtAt, recomputedAt: st.recomputedAt, building: st.building, loaded: st.loaded, total: UNIVERSE.length, errors: st.errors, rf: st.rfSource, fx: st.fxInfo || {},
       regime: st.regime && { available: st.regime.available, trend: st.regime.trend, trendAgreement: st.regime.trendAgreement, uncertainty: st.regime.uncertainty, volatility: st.regime.volatility, liquidityStress: st.regime.liquidityStress },
+      localRegimes: Object.entries(st.localRegimes || {}).map(([sym, r]) => ({ sym, name: r.name, available: r.available, trend: r.trend, trendAgreement: r.trendAgreement, uncertainty: r.uncertainty, volatility: r.volatility, liquidityStress: r.liquidityStress, members: r.members })),
       sources: SOURCES, stocks: [...st.dossiers.values()].map(summary) };
   }
   function company(sym) {

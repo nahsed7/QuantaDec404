@@ -44,7 +44,7 @@ function create({ dataDir, research, holdings }) {
     const v = d.valuation?.synthesis, rate = (d.decision?.scenarios || d.valuation?.scenarios || []).find(s => /Discount rates/.test(s.name));
     const fcfY = S.fin(d.fcf) && d.marketCap > 0 ? d.fcf / d.marketCap : null, eY = S.fin(d.eps) && d.price > 0 ? d.eps / d.price : null;
     return { sym: d.sym, label: d.label, sector: d.sector, region: d.region, country: d.country, ccy: d.listing.ccy, beta: d.volatility?.beta ?? null, betaVs: d.volatility?.betaVs ?? null,
-      addv: d.liquidity?.addv ?? null, spread: d.liquidity?.spreadEst ?? null, sigmaDaily: d.liquidity?.sigmaDaily ?? null, premium: v?.premium ?? null, status: v?.status ?? null,
+      addv: d.liquidity?.addv ?? null, spread: d.liquidity?.spreadUsed ?? d.liquidity?.spreadEst ?? null, sigmaDaily: d.liquidity?.sigmaDaily ?? null, premium: v?.premium ?? null, status: v?.status ?? null,
       rateShock: rate?.primaryChange ?? null, growth: d.valuation?.assumptions?.growth ?? null, yield: d.isFinancial ? eY : (fcfY ?? eY),
       riskScore: d.decision?.risk?.score ?? null, opportunity: d.decision?.opportunity?.score ?? null, confidence: d.decision?.confidence?.score ?? null };
   };

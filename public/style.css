@@ -234,3 +234,13 @@ tr.va-pick td{background:rgba(0,229,255,.08)}
 .pt-ctx{display:grid;gap:4px;margin-bottom:10px}
 .pt-ticket{border:1px solid var(--grid);border-radius:6px;padding:8px}
 td.neg{color:var(--sell)}td.pos{color:var(--buy)}
+/* Part 08 workstation sections */
+.ws-t th{cursor:pointer;white-space:nowrap}.ws-t th.sorted{color:var(--accent)}.ws-t tr[data-sym]{cursor:pointer}
+td.z-hi{background:rgba(0,200,120,.18)}td.z-lo{background:rgba(214,39,70,.18)}
+.st{padding:0 4px;border-radius:3px}.st-below{color:var(--accent)}.st-above{color:var(--sell)}.st-uncertain{color:var(--warn)}.st-insufficient{color:var(--muted)}
+.rl-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px}
+.rl-cell{border:1px solid var(--grid);border-radius:6px;padding:6px}.rl-trend{font-size:1.2em;font-weight:600}
+.rl-cell.t-bull{border-left:4px solid var(--buy)}.rl-cell.t-bear{border-left:4px solid var(--sell)}.rl-cell.t-sideways{border-left:4px solid var(--warn)}
+.rl-macro{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px}.spark{height:40px}
+.pv{padding:1px 6px;border-radius:3px;border:1px solid var(--grid)}.pv-ok{color:var(--buy)}.pv-failing{color:var(--sell)}.pv-needs-key,.pv-stale{color:var(--warn)}
+.ws-layout{max-width:600px;margin:8px auto;border:1px solid var(--grid);padding:8px;border-radius:6px}

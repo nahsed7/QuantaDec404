@@ -30,7 +30,7 @@ function cached(key, ttl, fn) {
 // Timeout plus one retry: on mobile data a connection attempt can hang (seen with Yahoo) and must not block a refresh.
 const getJSON = async (url, opt = {}) => {
   for (let i = 0; ; i++) {
-    try { const r = await fetch(url, { ...opt, signal: AbortSignal.timeout(opt.timeout || 15000) }); if (!r.ok) throw Object.assign(new Error(`${r.status} ${url}`), { status: r.status }); return await r.json(); }
+    try { const r = await PV.tracked(url, { ...opt, signal: AbortSignal.timeout(opt.timeout || 15000) }); if (!r.ok) throw Object.assign(new Error(`${r.status} ${url}`), { status: r.status }); return await r.json(); }
     catch (e) { if (i >= 1 || (e.status >= 400 && e.status < 500 && e.status !== 429)) throw e; await new Promise(r => setTimeout(r, 1000)); }
   }
 };
@@ -83,6 +83,8 @@ fs.mkdirSync(DATA, { recursive: true });
 const { create: authCreate, loadEnv } = require('./src/auth');
 loadEnv(path.join(ROOT, '.env'));
 const AUTH = authCreate(DATA);
+// Provider layer (Part 08): registry, health tracking and fallbacks for every external data source.
+const PV = require('./src/providers').create();
 const books = new Map();
 function bookRecorder(sym, pinned = false) {
   let b = books.get(sym);
@@ -185,9 +187,11 @@ function krSync() {
   if (!want.size) { if (KR.ws) { KR.gen++; KR.ws.close(); KR.ws = null; KR.subs.clear(); KR.status = 'idle'; } return; }
   if (!KR.ws) {
     const gen = ++KR.gen, ws = KR.ws = new WebSocket('wss://ws.kraken.com/v2'); KR.status = 'connecting';
-    ws.onopen = () => { if (gen !== KR.gen) return; KR.status = 'live'; KR.subs.clear(); krSync(); };
+    const t0 = Date.now();
+    ws.onopen = () => { PV.record('https://ws.kraken.com', true, Date.now() - t0); if (gen !== KR.gen) return; KR.status = 'live'; KR.subs.clear(); krSync(); };
     ws.onmessage = e => { if (gen === KR.gen) krMessage(JSON.parse(e.data)); };
-    ws.onclose = ws.onerror = () => { if (gen !== KR.gen) return; KR.ws = null; KR.subs.clear(); KR.status = 'reconnecting'; clearTimeout(KR.reconnect); KR.reconnect = setTimeout(krSync, 2000); };
+    ws.onerror = () => PV.record('https://ws.kraken.com', false, null, 'WebSocket error');
+    ws.onclose = () => { if (gen !== KR.gen) return; KR.ws = null; KR.subs.clear(); KR.status = 'reconnecting'; clearTimeout(KR.reconnect); KR.reconnect = setTimeout(krSync, 2000); };
     return;
   }
   if (KR.ws.readyState !== 1) return;
@@ -227,7 +231,7 @@ function krBasis(q) {
 async function pollFX() {
   FX.inflight++;
   try {
-    const r = await fetch('https://webrates.truefx.com/rates/connect.html?f=csv', { signal: AbortSignal.timeout(5000) });
+    const r = await PV.tracked('https://webrates.truefx.com/rates/connect.html?f=csv', { signal: AbortSignal.timeout(5000) });
     const changed = parseTrueFX(await r.text()).filter(q => !FX.last[q.pair] || q.t > FX.last[q.pair].t);
     for (const c of changed) { krBasis(c); fxTick(c); emit({ k: 'tq', ...c }); }
     FX.polls++; FX.err = null;
@@ -303,7 +307,7 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '
 const json = (res, code, v) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(typeof v === 'string' ? v : JSON.stringify(v)); };
 
 // ---- research pipeline (fundamentals, valuation, quant, decision scores) ----
-const RS = research.create({ dataDir: DATA, quotes: () => lastQuotes });
+const RS = research.create({ dataDir: DATA, quotes: () => lastQuotes, providers: PV });
 RS.wanted = 0;
 // ---- historical validation (Part 05): runs after each research build; identical inputs reuse the stored experiment ----
 const VS = require('./src/validation').create({ dataDir: DATA, research: RS });
@@ -320,7 +324,11 @@ const OMS = require('./src/oms').create({ dataDir: DATA, research: RS, quotes: (
 setInterval(() => OMS.tick().catch(e => console.error('order manager:', e.message)), 30e3);
 const PF = require('./src/portfolio').create({ dataDir: DATA, research: RS, holdings: () => OMS.holdings() });
 RS.setConcentration(PF.concentration);
-const rsBuild = () => RS.build().then(() => vsRun(false)).catch(e => console.error('research build failed:', e.message));
+// ---- monitors (Part 08): data quality, model performance, prospective log, macro, filings; disk retention ----
+const MON = require('./src/monitor').create({ dataDir: DATA, research: RS, validation: VS, oms: OMS, providers: PV });
+setTimeout(() => MON.retention(), 60e3); setInterval(() => MON.retention(), 24 * 3600e3);
+setInterval(() => { if (RS.state.builtAt) try { MON.logToday(); } catch (e) { console.error('prospective log:', e.message); } }, 3600e3);
+const rsBuild = () => RS.build().then(() => { try { MON?.logToday(); } catch {} return vsRun(false); }).catch(e => console.error('research build failed:', e.message));
 setTimeout(rsBuild, 2000); setInterval(rsBuild, 6 * 3600e3);
 // Live prices change premiums and scores: refresh every 60 s while someone is looking (full model rerun every 15 min).
 setInterval(async () => { if (Date.now() - RS.wanted < 600e3 && !RS.state.building) { try { await heatmap(); RS.tick(); } catch (e) { console.error('research recompute:', e.message); } } }, 60e3);
@@ -335,6 +343,10 @@ http.createServer(async (req, res) => {
     switch (url.pathname) {
       case '/api/auth': return json(res, 200, { canWrite: AUTH.allowed(req), loopback: AUTH.loopback(req), token: AUTH.loopback(req) ? AUTH.token() : undefined });
       case '/api/paper': return json(res, 200, OMS.view());
+      case '/api/monitor/data': return json(res, 200, MON.dataQuality());
+      case '/api/monitor/models': return json(res, 200, MON.modelPerformance());
+      case '/api/macro': try { return json(res, 200, await MON.macro()); } catch (e) { return json(res, 502, { error: e.message }); }
+      case '/api/research/filings': try { return json(res, 200, await MON.filings(String(q.get('sym') || '').toUpperCase())); } catch (e) { return json(res, 502, { error: e.message }); }
       case '/api/paper/preview': { let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON' }); } const p = OMS.preview(b); return json(res, p.error ? 400 : 200, p); }
       case '/api/paper/order': { let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON' }); } const o = OMS.submit(b); return json(res, o.status === 'rejected' ? 422 : 201, o); }
       case '/api/paper/cancel': { let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON' }); } const o = OMS.cancel(String(b.id || '')); return json(res, o.error ? 400 : 200, o); }
@@ -342,12 +354,12 @@ http.createServer(async (req, res) => {
       case '/api/paper/limits': { let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: 'invalid JSON' }); } return json(res, 200, OMS.setLimits(b)); }
       case '/api/heatmap': return json(res, 200, await heatmap());
       case '/api/trades': {           // recent real trades (seed for the order-flow view)
-        const r = await fetch(`${SPOT}/aggTrades?symbol=${cleanSym(q.get('symbol'))}&limit=1000`);
+        const r = await PV.tracked(`${SPOT}/aggTrades?symbol=${cleanSym(q.get('symbol'))}&limit=1000`);
         return json(res, r.status, await r.text());
       }
       case '/api/klines': {           // recent real OHLCV bars incl. taker-buy volume
         const iv = ['1s', '1m', '5m', '15m', '1h'].includes(q.get('interval')) ? q.get('interval') : '1m';
-        const r = await fetch(`${SPOT}/klines?symbol=${cleanSym(q.get('symbol'))}&interval=${iv}&limit=1000`);
+        const r = await PV.tracked(`${SPOT}/klines?symbol=${cleanSym(q.get('symbol'))}&interval=${iv}&limit=1000`);
         return json(res, r.status, await r.text());
       }
       case '/api/sentiment': return json(res, 200, await sentiment(cleanSym(q.get('symbol')), q.get('interval')));

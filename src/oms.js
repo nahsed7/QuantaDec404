@@ -24,7 +24,7 @@ function create({ dataDir, research, quotes, fetchQuotes, broker }) {
     // The session state is re-evaluated now from the quote's session times (the quote itself may be minutes old).
     const state = q?.sessionStart && q?.sessionEnd ? (Date.now() >= q.sessionStart && Date.now() < q.sessionEnd ? 'REGULAR' : 'CLOSED') : (q?.state || 'unknown'), open = state === 'REGULAR';
     return { sym, last, time, open, state, sessionEnd: q?.sessionEnd ?? null, ageMin: S.fin(time) ? (Date.now() - time) / 60e3 : null, kind: q ? 'delayed' : 'historical',
-      spreadEst: d.liquidity?.spreadEst ?? null, quotedSpread: d.liquidity?.quotedSpread ?? null, sigmaDaily: d.liquidity?.sigmaDaily ?? null, advShares: d.liquidity?.advShares ?? null,
+      spreadEst: d.liquidity?.spreadModel ?? d.liquidity?.spreadEst ?? null, quotedSpread: d.liquidity?.quotedSpread ?? null, sigmaDaily: d.liquidity?.sigmaDaily ?? null, advShares: d.liquidity?.advShares ?? null,
       fxUSD: X.usdPer(d.listing.ccy, Date.now(), research.state.fx), region: d.region, sector: d.sector, ccy: d.listing.ccy, label: d.label };
   }
   function valuation() {

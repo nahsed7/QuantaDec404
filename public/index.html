@@ -23,12 +23,18 @@
 
 <nav class="tabs">
   <button data-v="heat" class="on"><span>§1</span> Equity heatmap</button>
+  <button data-v="valx"><span>§1b</span> Valuation explorer</button>
+  <button data-v="comp"><span>§1c</span> Company research</button>
+  <button data-v="quant"><span>§1d</span> Quant screen</button>
+  <button data-v="riskl"><span>§1e</span> Risk lab</button>
   <button data-v="state"><span>§2</span> 10-D state space</button>
   <button data-v="flow"><span>§3</span> Order flow</button>
   <button data-v="lab"><span>§4</span> Analysis</button>
   <button data-v="valid"><span>§5</span> Validation</button>
   <button data-v="port"><span>§6</span> Portfolio lab</button>
   <button data-v="paper"><span>§7</span> Paper trading</button>
+  <button data-v="dq"><span>§8</span> Data quality</button>
+  <button data-v="mp"><span>§9</span> Model performance</button>
 </nav>
 
 <div class="controls" id="controls" hidden>
@@ -72,7 +78,7 @@
     <figcaption><b>Figure 1.</b> <span id="hmCaption">Large-cap equities.</span> <span class="mono" id="hmStatus"></span></figcaption>
   </figure>
   <div class="hm-legend" id="hmLegend"></div>
-  <aside class="hm-panel" id="hmPanel" hidden><button class="btn mini hm-close" id="hmClose" title="Close (Esc)">✕</button><div id="hmPanelBody"></div></aside>
+
 </section>
 
 <!-- §2 -->
@@ -184,6 +190,13 @@
 </section>
 
 <!-- §4 -->
+<div id="wsLayout" class="ws-layout" hidden></div>
+<section id="valx" class="view"><h2 class="sec-title">Valuation explorer</h2><div class="va-ctl" id="veF"></div><div id="veChartWrap"><div class="plot" id="veChart" style="height:100%"></div></div><p class="muted" id="veNote"></p><div id="veTable"></div><p class="ws-err warn"></p></section>
+<section id="comp" class="view"><h2 class="sec-title">Company research <span class="muted">· click a row to open the research panel</span></h2><div class="va-ctl" id="coF"></div><div id="coTable"></div><div id="coFilings" class="muted">Hover a company to see its recent SEC announcements.</div><p class="ws-err warn"></p></section>
+<section id="quant" class="view"><h2 class="sec-title">Quantitative screen <span class="muted">· highlighted cells are unusual (&gt; 1.5σ from the universe)</span></h2><div class="va-ctl" id="qsF"></div><div id="qsTable"></div><p class="ws-err warn"></p></section>
+<section id="riskl" class="view"><h2 class="sec-title">Risk laboratory</h2><h4>Market regimes</h4><div id="rlRegimes"></div><h4>Macro context</h4><div id="rlMacro"></div><div class="va-grid"><figure class="fig"><div class="plot" id="rlScatter" style="height:320px"></div><figcaption><b>Volatility vs risk score</b>, coloured by valuation classification, sized by market cap.</figcaption></figure><div><h4>Most exposed to a 20 % fall in their index</h4><div id="rlStress"></div></div></div><p class="ws-err warn"></p></section>
+<section id="dq" class="view"><h2 class="sec-title">Data quality monitor</h2><div id="dqBody"><p class="muted">Loading…</p></div><p class="ws-err warn"></p></section>
+<section id="mp" class="view"><h2 class="sec-title">Model performance monitor</h2><div id="mpBody"><p class="muted">Loading…</p></div><p class="ws-err warn"></p></section>
 <section id="valid" class="view">
   <h2 class="sec-title">Historical validation <span class="muted">· does any of this have predictive value out of sample?</span></h2>
   <div class="va-ctl"><label>Strategy <select id="vaSig"></select></label><button class="btn mini" id="vaRerun" title="Recompute from the current data (same data gives the same experiment id)">↻ Re-run</button>
@@ -258,6 +271,7 @@
   </div>
 </section>
 </main>
+  <aside class="hm-panel" id="hmPanel" hidden><button class="btn mini hm-close" id="hmClose" title="Close (Esc)">✕</button><div id="hmPanelBody"></div></aside>
 
 <div class="setup" id="setup" hidden><div class="setup-card fig">
   <h2>Open a demo account</h2>
@@ -272,5 +286,5 @@
 <script src="lab.js"></script>
 <script src="app.js"></script>
 <script src="trade.js"></script>
-<script src="heat.js"></script><script src="validation.js"></script><script src="portfolio.js"></script><script src="paper.js"></script>
+<script src="heat.js"></script><script src="validation.js"></script><script src="portfolio.js"></script><script src="paper.js"></script><script src="workstation.js"></script>
 </body></html>

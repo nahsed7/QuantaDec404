@@ -109,7 +109,7 @@ All series are daily bars in the **listing currency**. Market comparisons use th
 | Regime-dependent σ | stock σ when the index is above or below its 200-day average, and when the index's 20-day σ (measured to the previous day) is above or below its median |
 | β | OLS on daily log returns, common consecutive dates, 2 years; ± one standard error |
 | Liquidity | median daily volume and traded value (1 month, US$); turnover = volume ÷ shares; Amihud = mean \|r\| / traded value × 10⁹ |
-| Spread estimate | Abdi–Ranaldo 2017: per two-day pair √max(0, 4·(c_t − η_t)(c_t − η_{t+1})), averaged (η = log mid-range). An estimate; no quoted spreads in the free feeds |
+| Spread | **Used for costs:** the quoted spread when a quote feed is configured, otherwise a **liquidity-tier model** by median daily US$ traded value: ≥ $1 B → 2 bp, ≥ $200 M → 4 bp, ≥ $50 M → 8 bp, ≥ $10 M → 20 bp, below → 50 bp (an assumption based on typical exchange spreads). **Diagnostic only:** the Abdi–Ranaldo (2017) monthly estimator √max(0, 4·mean[(c_t − η_t)(c_t − η_{t+1})]) over 60 days, which proved unreliable for liquid stocks on daily bars (NVDA read 3 %, Toyota 1.5 %; the per-pair variant overstated tight spreads 6–13×). |
 | Trading cost | half-spread + σ_daily·√(order ÷ daily value) (square-root impact, k = 1); cost curve for $10 k to $10 M; above 10 % of daily value flagged as not fillable in a day. **Theoretical**: real fills depend on the book, time and venue. |
 
 ## 3. Fundamentals (`lib/fundamentals.js`)
@@ -247,7 +247,7 @@ Weights are only ever **capped**, never raised, so a single lucky test period ca
 ### 8.1 Simulated fills (paper venue)
 - **No fill on the displayed price:** only a quote timestamped after submission + 2 s can fill. The free quotes are delayed about 15–20 minutes, so fills typically appear that long after submission.
 - **Prices:**
-  - bid/ask = last × (1 ∓ s/2), with s the quoted spread if available, else the Abdi–Ranaldo estimate clamped to [2 bp, 2 %];
+  - bid/ask = last × (1 ∓ s/2), with s the quoted spread if available, else the liquidity-tier model (clamped to [2 bp, 2 %]);
   - buys pay ask × (1 + σ_d·√(q/ADV)) and sells receive bid × (1 − σ_d·√(q/ADV)).
 - **Partial fills:** at most 10 % of the volume expected since the previous evaluation, ADV pro rata over a 390-minute session, minimum 1 share.
 - **Limit orders:** no fill if the touch is beyond the limit; the quantity is reduced until the impacted price respects the limit.
