@@ -1,208 +1,209 @@
 # Project Specification: Valuation-Integrated Market Intelligence & Trading System
 
-Living document. Each new specification part **extends** this file and does not replace earlier requirements.
-Status as of 2026-11-25: **Parts 01–04 implemented** (audit, valuation-integrated heat map, multi-model valuation and quant analysis, decision intelligence). Live trading stays disabled. Waiting for Part 05.
+Repository: github.com/nahsed7/QuantaDec404 (MIT). The full nine-part brief is in `docs/MASTER_SPECIFICATION.md`.
+
+**Status, 2026-11-25:**
+- **Part 01 has been redone from scratch at the user's request**, as a fresh audit of the current code (§2).
+- Parts 02–09 will be implemented one at a time, each with tests, a spec update and its own commit.
+- An earlier pass already built a first version of Parts 02–04 (§10). The user asked for those parts to be redone. That code stays in place until each part is re-sent; it is then reviewed against the audit and reworked or replaced.
+- Live trading is disabled. **Waiting for Part 02.**
 
 ---
 
-## 1. Standing principles (from Part 01)
-- **Analytical independence.** Valuation, momentum, risk, confidence and execution are separate components with separate outputs. No single composite score may silently dominate.
-- **Transparency.** Every number shows its inputs, assumptions and data source. Estimates are labelled as estimates.
-- **No fabrication.** Only real market and financial data. A missing value stays missing; it is never filled with synthetic data.
-- **Capital preservation first.** Live trading stays **disabled** until it is separately authorised, validated and legally appropriate. Paper trading only until then.
-- **Lightweight and local-first.** Few dependencies and modest RAM and CPU use. Heavy components need a written justification here.
-- **Continuity.** Existing data, configuration and working features are preserved.
+## 1. Standing principles (Part 01)
+- **Analytical independence.** Valuation, momentum, risk, confidence and execution are separate components with separate outputs. No single metric may silently dominate.
+- **Transparency.** Every number exposes its inputs, assumptions, source and timestamp. Estimates are labelled as estimates.
+- **No fabrication.** Only real market and financial data. A missing value stays missing and is shown as missing.
+- **Capital preservation.** Live trading stays **disabled** until it is separately authorised, validated and legally appropriate. Paper trading only until then.
+- **Lightweight, local-first.** Few dependencies and modest RAM and CPU use. Any heavy component needs a written justification here.
+- **Continuity.** Existing data, configuration and working features are preserved. Later parts extend this document rather than replace it.
+- **Working code is not assumed correct** (see the findings in §2.6).
 
-## 2. Existing system (audit, 2026-11-25)
+## 2. Repository audit (fresh, 2026-11-25)
 
-### 2.1 Identity
-"Market Microstructure Laboratory": a private, local web app for live market observation and paper trading.
-- Runs on an Android phone (Termux, proot Ubuntu, aarch64) and is viewed from a PC over the phone's hotspot.
-- Repository: github.com/nahsed7/QuantaDec404 (MIT).
+### 2.1 What the project is
+"Market Microstructure Laboratory" grew into a private web app with three halves:
+1. **Live market observation.** Crypto, FX and an equity heat map.
+2. **A first equity research engine.** Fundamentals, valuation and scores.
+3. **Paper trading.** Leveraged crypto and FX.
 
-### 2.2 Stack
-| Layer | Technology | Notes |
+It runs on an Android phone (Termux, proot Ubuntu, aarch64). It is viewed in a browser there, or from a PC over the phone's hotspot.
+
+### 2.2 Stack and dependencies
+| Layer | Technology | Assessment |
 |---|---|---|
-| Server | Node.js 22, **zero npm dependencies** (`http`, `fetch`, global `WebSocket`, `zlib`) | `server.js`, 390 lines, ~22 MB RSS |
-| Front end | Vanilla JS, Plotly 2.35.2 (CDN), custom canvas renderer, GeoGebra (CDN, function page only) | `public/` |
-| Storage | JSONL append files plus one JSON account file in `data/` (gitignored, ~6 MB) | No database |
-| Launcher | `start.sh`, `start.bat`, `serve-bg.sh`, `app.py` (Streamlit wrapper, untested) | |
+| Server | Node.js 22.22, **zero npm dependencies** (`http`, `fetch`, `WebSocket`, `zlib`) | Good fit for the phone. One 388-line `server.js` is the router, feeds, recorder, account store and zip builder all in one. |
+| Analytics | `lib/*.js`: UMD modules shared by server and browser | Good design: the same code runs in tests, on the server and in the browser. |
+| Research pipeline | `src/research.js` | Fetching, caching, normalisation and orchestration mixed in one file. |
+| Front end | Vanilla JS, Plotly 2.35.2 (CDN), custom canvas, GeoGebra (CDN, function page only) | Works, but `public/app.js` (757 lines) shares global state. Dark "holographic" and light themes exist. |
+| Storage | JSONL tick and order-book files, a JSON paper account (with versioned history) and a JSON disk cache in `data/research` (26 MB) | No database. JSONL never compacts: `EURUSDT.jsonl` is already 2.3 MB. |
+| Launchers | `start.sh`, `start.bat`, `serve-bg.sh` (256 MB heap cap), `app.py` (Streamlit wrapper) | `app.py` has never been run (Streamlit is not installed). |
+| Tests | `test/analytics.test.js`: 22 `node:test` unit tests, all passing | No tests for the server, API failures, UI or trading. |
 
 ### 2.3 Components
 | File | Lines | Role |
 |---|---|---|
-| `server.js` | 390 | Static server and REST/SSE API, data feeds, order-book recorder, FX composite relay, account store, zip download |
-| `public/app.js` | 778 | Main UI: heatmap, live candles, 10-D 3D state space, order flow, analysis figures |
-| `public/lab.js` | 203 | Pure maths (UMD, Node-testable): features, KDE forecast, correlations, Takens embedding, Hurst R/S, Fisher–Rao distance, H0 persistence, PCA (Jacobi), Isomap |
-| `public/trade.js` | 212 | Paper-trading account: bid/ask fills, leverage, TP/SL, stop-out, revision-checked saves |
-| `public/fn.js` + `function.html` | 196 + 73 | Live price as closed-form P(x) (line + sine-series least squares) for GeoGebra/Desmos |
-| `public/index.html`, `style.css` | 237, 146 | Layout, holographic dark theme plus a light theme |
+| `server.js` | 388 | Static files plus API: `/api/heatmap`, `klines`, `trades`, `book`, `sentiment`, `fng`, `fx/bars`, `fx/stream` (SSE), `fx/status`, `account` (+`/history`), `research/universe`, `research/company`, `research/regime`, `/download` |
+| `public/app.js` | 757 | Live candles, 10-D 3D state space, order flow, analysis figures |
+| `public/lab.js` | 203 | Maths: KDE, correlations, Takens embedding, Hurst, Fisher–Rao, H0 persistence, PCA, Isomap |
+| `public/trade.js` | 212 | Paper account: bid/ask fills, leverage, TP/SL, stop-out |
+| `public/heat.js` | 388 | Valuation heat map, research panel, comparison |
+| `public/fn.js`, `function.html` | 269 | Live price as P(x) for GeoGebra and Desmos |
+| `lib/stats.js` | 71 | Quantiles, rank correlation, regression, EWMA volatility, drawdown, seeded RNG |
+| `lib/treemap.js` | 70 | Squarified treemap, colour scales, valuation marker |
+| `lib/fundamentals.js` | 176 | SEC XBRL to annual rows, latest balance sheet, ratios, Piotroski-style F-score |
+| `lib/valuation.js` | 250 | DCF, DDM, comparables, earnings power, assets, historical multiples, synthesis, scenarios |
+| `lib/quant.js` | 150 | Momentum, exhaustion, volatility (VaR/ES), liquidity, trade-cost estimate |
+| `lib/regime.js` | 60 | Vote-based regime (SPY trend, VIX, breadth, rotation, Amihud stress) |
+| `lib/decision.js` | 143 | Opportunity, risk and confidence scores, evidence and comparison |
+| `lib/calibrate.js` | 41 | Quarterly rank-IC of earnings yield and 12−1 momentum |
+| `src/research.js` | 269 | Universe of 54 US large caps; EDGAR, Yahoo and Treasury loaders; cache; build and refresh loop |
 
-### 2.4 API surface
-`/api/heatmap`, `/api/klines`, `/api/trades`, `/api/sentiment`, `/api/fng`, `/api/book`, `/api/fx/bars`, `/api/fx/stream` (SSE), `/api/fx/status`, `/api/account` (GET/PUT, rev check), `/api/account/history` (versions plus restore), `/download`.
+### 2.4 Current capabilities (verified)
+- Live crypto (Binance WS) and FX: a Kraken + TrueFX composite at about 21–35 quotes/s on EUR/USD, tracking TrueFX to about 0.2 pip.
+- Order-book depth recording, the 10-D state-space view and the function view.
+- Equity research for 54 US large caps:
+  - SEC fundamentals and a Treasury risk-free rate (10-year at 4.91% on 2026-11-24).
+  - Six valuation models and three scores.
+  - Full recompute about 5.8 s, price refresh about 0.24 s, about 47 MB heap.
+- Paper trading for crypto and FX, with a versioned account file.
 
-### 2.5 Data sources in use
-| Source | Data | Access | Reliability |
-|---|---|---|---|
-| Yahoo Finance v8 chart | Equity quotes (54 hard-coded large caps), FX history | Unofficial, no key | Can break or rate-limit without notice |
-| Binance (data-api.binance.vision, WS stream) | Crypto klines, trades, book ticker, depth | Official public, no key | Good |
-| Binance futures (fapi) | Long/short ratio, funding | Official public | Geo-blocked in some regions (e.g. US) |
-| TrueFX | Indicative interbank FX quotes | Free, no login | Indicative only, not executable; ~1 update/s |
-| Kraken WS v2 | Real fiat FX quotes and trades for 7 pairs | Official public | Good; JPY pairs inactive |
-| alternative.me | Crypto Fear & Greed index | Free | A crypto index, not equity sentiment |
+### 2.5 Missing capabilities (against the 9-part brief)
+| Part | Missing |
+|---|---|
+| 05 Validation | No backtester. No train/validation/test split or walk-forward. No benchmarks, costs or metrics (Sharpe, Sortino, drawdown, turnover). No experiment records. |
+| 06 Portfolio | No equity holdings. No correlation matrix, risk contributions, portfolio scenarios or allocation comparison. |
+| 07 Execution | Paper trading covers leveraged crypto and FX only. No equity orders, limit or stop orders, partial fills or rejections, and no slippage or fee model. No risk-control engine, and no broker-adapter layer. |
+| 08 Data and UI | No provider abstraction, no data-quality monitor and no model-performance monitor. No local database. The ten workstation sections do not exist. |
+| 09 Testing | No reproducible test datasets, API-failure tests, interface tests, leakage tests or traceability checks. |
 
-### 2.6 What works (verified in earlier sessions)
-- Live equity heatmap.
-- Crypto and FX live candles.
-- Composite FX feed: Kraken shifted onto the TrueFX level; ~0.16–0.19 pip tracking error vs TrueFX; ~21–35 quotes/s on EUR/USD.
-- Order-book depth recording.
-- 10-D state-space view and the five analysis methods.
-- Paper trading with P&L currency conversion.
-- Function view: the formula text matches the fit to within 0.001 units.
+### 2.6 Findings: things that work but are not correct enough
+These were found by reading the code and checking the live data. They are weaknesses, not cosmetic issues.
 
-### 2.7 Limitations and weaknesses found
-1. **No fundamentals at all.** No financial statements, valuation, filings, macro data or risk-free rate. This is the largest gap against Part 01.
-2. **Equity coverage.** 54 hard-coded tickers. Price change only, with no history store and no corporate actions.
-3. **Unofficial Yahoo dependency** for equities and FX history.
-4. **No database.** JSONL suits tick streams but not relational financial data. Order-book JSONL files grow without on-disk compaction.
-5. **FX recording gaps.** FX bars are recorded only while someone views the site or requested bars in the last 10 min, and Yahoo 1-m FX history is sparse.
-6. **Monolithic UI file.** `app.js` (778 dense lines, shared global state) is hard to test and extend.
-7. **No tests in the repo.** The harnesses (`smoke.js`, `tradetest.js`, fake DOM) live outside it.
-8. **No access control.** The server binds `0.0.0.0` with no authentication, so anyone on the hotspot can read or modify the paper account and download the source. This must be fixed before any brokerage integration.
-9. **Statistical caveats.**
-   - The KDE "forecast" is the empirical distribution of past returns, not a predictive model.
-   - Hurst, persistence and Isomap run on small samples with no confidence intervals.
-   - The FX composite assumes a slowly varying basis, and TrueFX is itself indicative.
-10. **Paper-trading realism.** Bid/ask spread only: no commissions, swaps or financing, slippage model, or margin calls beyond a stop-out at margin.
-11. **Isomap cost.** O(n²) memory, plus Dijkstra over all points; slow on the phone for n ≥ 1000.
-12. **Untested pieces.** `app.py` was syntax-checked only. GeoGebra rendering was tested with a stub only.
+1. **Fundamentals are not point-in-time.**
+   - `fundamentals.annual()` keeps the *latest* filing for each fiscal year (`filed > cur[1]`), so restated numbers replace what was originally reported.
+   - Any historical test built on this has look-ahead bias, or at best runs late.
+   - **Critical for Part 05.** Fix: keep every filed version and select "as known on date t".
+2. **Price returns ignore dividends.** Calibration uses close-to-close returns, so high-yield stocks look worse than they were. Fix: total return from Yahoo dividend events, which are already fetched.
+3. **Survivorship bias.**
+   - The universe is today's 54 large caps; companies that left the index or were delisted are absent.
+   - Free price data for delisted stocks is not available from Yahoo.
+   - This must be disclosed on every historical result, and reduced where data permits.
+4. **Market-regime panel is currently down.**
+   - The SPY download failed on the last build: Node's `fetch` timed out connecting to one Yahoo IP, while `curl` succeeded. Nothing was cached, so the regime shows "needs 210 bars".
+   - `getJSON` has no timeout or retry, and Yahoo responses are never validated.
+5. **Score weights and scales are hand-picked and undocumented.**
+   - Examples: valuation weight 3, `1000·(yield − rf)`, volatility/0.6.
+   - This breaks the brief's rule 4: no weights without a documented rationale.
+6. **Valuation dominates opportunity although the data does not support it.**
+   - Valuation has the largest weight (3).
+   - The live calibration shows the earnings-yield signal had *negative* rank-IC (−0.056, t = −1.19, 35 quarters) in this universe.
+   - The design should let the validation results (Part 05) set or cap how much each component counts.
+7. **The "out-of-sample validation" input to confidence is not out-of-sample.** It is the later half of the same calibration sample, with no held-out test and no protection against choosing models after seeing the data.
+8. **Fixed assumptions.** The equity risk premium is a constant 5%. The CAPM beta uses a Blume adjustment. Both are reasonable, but they apply to all stocks and only the browser can override them.
+9. **Liquidity cost model** (half-spread + σ√(Q/ADV), k = 1). The spread is estimated from daily bars, not quotes; this is never labelled in the UI.
+10. **Paper trading realism.** Fills at the displayed bid or ask, with no fees, financing, slippage, partial fills or rejections.
+11. **No access control.** The server listens on `0.0.0.0` without authentication, so anyone on the hotspot can change the paper account. This must be fixed before Part 07.
+12. **Two copies of the code.** The live server runs from `/root/market-site`. The working clone is `/data/data/com.termux/files/home/QuantaDec404`. Decision: **the clone is canonical**; the server will be moved to run from it.
+13. **Unverified pieces.** `app.py` has not been run, and GeoGebra was only tested with a stub.
 
-### 2.8 Hardware (phone, the current host)
-- 8-core aarch64, 3.6 GB RAM (~1 GB available), 4 GB swap.
-- **2.6 GB disk free (95% full).**
-- Mobile data, with ~0.4–0.6 s network latency.
-- Python 3 is minimal: no numpy or pandas installed.
-- A PC is available for viewing and could run heavier jobs.
+### 2.7 Hardware (phone, the current host)
+- 8-core aarch64, 3.6 GB RAM (about 1 GB available while running) and 4 GB swap.
+- **About 2.4 GB of disk free (96 % full).**
+- Mobile data with about 0.4–0.6 s latency and occasional connection timeouts.
+- Node 22.22. Python 3.14 without numpy or pandas.
 
-## 3. Recommended architecture (proposal, not yet agreed)
-Keep the Node core and grow it in modules. Each analytical component is independent and exposes its inputs.
+Consequences:
+- All analytics stay in plain JavaScript typed arrays.
+- No ML frameworks and no Docker.
+- The JSON cache and logs need size limits.
+- A PC is available for viewing and optional heavy offline runs.
+
+### 2.8 Local vs external
+- **Local:** all computation, caches, the paper account, experiments and the UI.
+- **External (read-only):**
+  - SEC EDGAR: fundamentals.
+  - Yahoo: equity and FX prices and dividends.
+  - US Treasury: rates.
+  - Binance, Kraken and TrueFX: live crypto and FX.
+  - alternative.me: crypto sentiment.
+- **Future broker adapter:** external, disabled.
+
+## 3. Recommended architecture
+Keep the zero-dependency Node core and the shared UMD `lib/`, and split by responsibility:
 
 ```
-server.js (thin router)
-src/
-  feeds/        market data adapters (binance, kraken, truefx, yahoo, …), one interface: quotes, bars, trades
-  fundamentals/ SEC EDGAR XBRL loader, normaliser (statements, shares, segments), restatement-aware
-  macro/        risk-free curve (US Treasury), rates, inflation (FRED)
-  store/        node:sqlite for fundamentals/valuations/runs; JSONL for tick streams (with rotation)
-  valuation/    DCF (FCFF/FCFE), residual income, multiples, reverse-DCF; each returns a distribution plus assumptions
-  quant/        momentum, factor exposures, volatility models; reuse lab.js
-  risk/         VaR/ES, drawdown, beta, liquidity, scenario and stress tests
-  confidence/   data quality, model agreement and parameter-sensitivity scores (separate from opportunity)
-  portfolio/    allocation research (risk parity, Kelly-capped, mean-variance with shrinkage)
-  backtest/     walk-forward, transaction costs, out-of-sample discipline
-  execution/    broker interface; paper adapter = current trade logic; live adapters behind a hard disabled flag
-public/         UI split into per-view modules
-test/           unit tests (node:test) plus the existing harnesses moved in
+server.js                 thin router + static files + auth
+src/providers/            one interface per data kind (quotes, bars, fundamentals, rates); adapters: yahoo, sec, treasury, binance, kraken, truefx
+                          → timeout, retry, schema validation, source + timestamp + kind (live/delayed/historical/estimated) on every record
+src/store/                cache with size limits; node:sqlite for point-in-time fundamentals, experiments, orders (built in to Node ≥ 22.5)
+lib/ (pure, tested)       stats · fundamentals (point-in-time) · valuation · quant · regime · decision · backtest · portfolio · execution-sim · risk-controls
+src/engines/              research (orchestration), validation runs, portfolio, order management (paper)
+src/brokers/              adapter interface; paper adapter; live adapters hard-disabled behind config + explicit authorisation
+public/                   one workstation shell, a module per section (map, valuation, research, quant, risk, portfolio, backtest, paper, data quality, model performance)
+test/                     unit + leakage + API-failure + simulation + UI (stub DOM); fixtures under test/fixtures (real snapshots, synthetic sets labelled as such)
 ```
-- **Storage:** built-in `node:sqlite` (Node ≥ 22.13), so no new dependency.
-- **Computation:** JavaScript `Float64Array` numerics for the online parts. Optional Python (numpy/scipy/statsmodels) on the PC for heavy offline research, with no requirement on the phone.
-- **Security before brokerage:** an access token, an option to bind to localhost only, and an audit log of every order.
 
 ## 4. Dependency policy
-- **Default:** none beyond Node built-ins. Existing CDN libraries (Plotly, GeoGebra) stay.
-- **Candidates, only when needed:**
-  - `node:sqlite` (built-in).
-  - Optional PC-side Python: numpy, scipy, pandas and statsmodels, for research notebooks only.
-  - No large ML models.
+- **Default:** Node built-ins only. The CDN libraries already in use (Plotly, GeoGebra) stay.
+- **Allowed if needed:** `node:sqlite` (built in), and optional Python on the PC for offline research notebooks.
+- **Not allowed without justification:** ML frameworks, databases needing a server, or front-end build tool-chains.
 
-## 5. Data-provider options
-| Need | Provider | Cost and limits | Notes |
+## 5. Data providers
+| Need | Provider | Limits |
+|---|---|---|
+| US fundamentals | **SEC EDGAR XBRL** (companyfacts) | Official and free. The User-Agent should carry contact details. US filers only. As-reported data needs normalising, and every filed version is available, so point-in-time is possible. |
+| Equity prices and dividends | Yahoo chart API (in use) | Unofficial: can rate-limit or change without notice. No delisted history. Personal use only. |
+| Alternative prices | Stooq end-of-day CSV; Alpaca market data (free IEX feed, needs an account) | Stooq has no API terms; IEX covers about 2–3 % of US volume. |
+| Rates | US Treasury yield curve (in use); FRED (free key) | Official. |
+| Crypto and FX | Binance, Kraken, TrueFX (in use) | TrueFX is indicative only. |
+| Broader fundamentals | FMP, Finnhub, Alpha Vantage free tiers | Need keys; small daily quotas. |
+| Paper or live broker | Alpaca paper API; Interactive Brokers | Live stays disabled. |
+
+None of the free sources permit commercial redistribution. This is a private research tool.
+
+## 6. Roadmap (one part at a time)
+| Step | Part | Content | Fixes from §2.6 |
 |---|---|---|---|
-| US fundamentals | **SEC EDGAR XBRL API** (companyfacts, submissions) | Free, official, 10 req/s | Requires a User-Agent with contact info (the user must supply it). US filers only. As-reported data needs normalising. |
-| Fundamentals (broader, normalised) | Financial Modeling Prep | Free tier ~250 req/day | API key; limited history on free tier |
-| | Alpha Vantage | Free 25 req/day | API key; too limited for screening |
-| | Finnhub | Free tier, 60 req/min | API key; fundamentals partly premium |
-| Equity prices | Yahoo (current), Stooq (EOD CSV), Alpaca market data (free IEX feed) | Free | Yahoo is unofficial; Alpaca needs an account |
-| Risk-free and macro | US Treasury yield-curve XML, FRED | Free (FRED key) | Official |
-| FX | TrueFX + Kraken (current) | Free | OANDA rejected by the user as too expensive |
-| Paper or live brokerage | Alpaca (paper API free; US equities and crypto), Interactive Brokers (broad; heavier gateway) | Free paper | Live stays disabled per §1 |
-| Not used | Broker session-cookie or unofficial binary-option APIs | n/a | Terms-of-service and account-security risk |
-
-## 6. Incremental roadmap (proposal)
-0. **Hygiene.**
-   - Move tests into `test/` and run them against an isolated port and data dir, never the live account.
-   - Add an access token and a bind option.
-   - Rotate the order-book JSONL files.
-   - Split `app.js` into modules.
-1. **Data layer.**
-   - `node:sqlite` store.
-   - Equity price history (daily) for a configurable universe.
-   - Treasury risk-free curve.
-2. **Fundamentals.** EDGAR XBRL ingestion and normalisation (income, balance, cash flow, shares), with data-quality flags.
-3. **Valuation.** DCF, residual income, multiples and reverse-DCF. Every model outputs a value distribution (Monte Carlo over stated assumption ranges) plus a sensitivity table.
-4. **Quant and risk.** Momentum, volatility, beta, drawdown, VaR/ES and liquidity, kept separate from valuation.
-5. **Confidence and opportunity.**
-   - Confidence measures data completeness, model dispersion and assumption sensitivity.
-   - Opportunity is a valuation gap compared with risk, reported alongside confidence and never merged into it.
-6. **Scenarios and backtesting.** Historical and forward scenarios, and walk-forward backtests with costs.
-7. **Portfolio research.** Allocation methods with constraints, plus the paper portfolio.
-8. **Execution architecture.** Broker interface, a paper adapter, and live adapters coded but hard-disabled.
+| 1 | 02 | Heat map: review and rework the existing version against the brief | 4, 9 (labels) |
+| 2 | 03 | Valuation and quant engines; point-in-time fundamentals; total returns | 1, 2, 8 |
+| 3 | 04 | Decision engine with documented weights and scales | 5, 6, 7 |
+| 4 | 05 | Walk-forward validation, benchmarks, costs, experiments; feeds confidence | 3, 7 |
+| 5 | 06 | Portfolio and opportunity cost | — |
+| 6 | 07 | Order simulation, risk controls, broker adapters (disabled), auth | 10, 11 |
+| 7 | 08 | Provider layer, data-quality and model monitors, workstation UI, storage limits | 4, 12 |
+| 8 | 09 | Full test suite, traceability, final documentation | 13 |
 
 ## 7. Decision log
 | Date | Decision |
 |---|---|
 | 2026-11-24 | Real data only; no simulations. |
 | 2026-11-24 | Free FX composite (Kraken + TrueFX) instead of OANDA. |
-| 2026-11-24 | Tests must never target the live server (port 8080) or `data/account.json`. Use `PORT=8099 DATA_DIR=<tmp>`. |
-| 2026-11-25 | Part 01: audit only. Spec file created. Live trading disabled. |
-| 2026-11-25 | Parts 02–04 built with zero npm dependencies; analytics in `lib/` shared by server and browser. Fundamentals from SEC EDGAR (free, official), risk-free rate from US Treasury. Valuation models never averaged. |
+| 2026-11-24 | Tests never target the live server (port 8080) or `data/account.json`; use `PORT=8099 DATA_DIR=<tmp>`. |
+| 2026-11-25 | Part 01 redone at the user's request. Earlier Parts 02–04 code is kept until each part is re-sent, then reworked or replaced. |
+| 2026-11-25 | Parts are implemented one at a time, each tested and committed separately. |
+| 2026-11-25 | `/data/data/com.termux/files/home/QuantaDec404` is the canonical working copy. |
 
 ## 8. Outstanding questions for the user
-- Equity universe: US only (EDGAR) or international?
-- SEC User-Agent: currently a generic tool name. The SEC asks for contact details; add yours if requests get blocked.
-- Willingness to create free API keys (FRED, FMP, Alpaca paper).
-- Should heavy research run on the PC (Python allowed there) or stay phone-only?
+- Equity universe: keep the 54 US large caps, widen it (e.g. S&P 500 via EDGAR), or go international?
+- Contact string for the SEC User-Agent (the SEC asks for one; it stays local).
+- Would you create free API keys (FRED, Alpaca paper) if a part needs them?
+- Should heavy research runs use the PC, or stay phone-only?
 
 ## 9. Testing status
-- Manual and harness smoke tests passed for the earlier features (2026-11-24).
-- `node --test test/*.test.js`: **22 tests, all passing** (2026-11-25). They cover treemap geometry and colour mapping, valuation markers, DCF/DDM against hand-computed values, comparables excluding the company itself, synthesis never averaging, scenarios, missing-data handling, quant functions refusing short data, score independence, comparison never picking a winner, and calibration using only filings public at each formation date.
-- Browser code exercised against real data with a stub DOM (every tab, comparison, regime panel).
-- Performance on the phone: full research recompute ~5.8 s, per-minute price refresh ~0.24 s, heap ~47 MB after GC (capped at 256 MB in `serve-bg.sh`).
+- 22 unit tests pass (`node --test test/*.test.js`, 2026-11-25).
+- Not covered: server routes, provider failures, leakage, UI and trading.
 
-## 10. Part 02: valuation-integrated heat map (done)
-- **Files:** `public/heat.js` (UI), `lib/treemap.js` (squarified treemap, colour scales, valuation marker; pure, tested).
-- **Size:** market cap, volume, dollar turnover or other metrics, chosen by the user. **Colour:** 1D, 1W, 1M, 3M returns, or sector-relative return.
-- **Valuation on every tile:** a small marker places the price inside the primary model's low/base/high range. The border shows the status: below, within, above, or "too uncertain". The hover card shows price, range, premium or discount, valuation percentile and confidence.
-- **Research panel** opens beside the map (no page change). It shows price and valuation history, fundamentals, momentum, volatility, liquidity, the three scores, and supporting and contradicting evidence. Several companies can be compared.
-- **Legend** explains every encoding. Each metric carries its source and timestamp, labelled live, delayed, historical or estimated. Missing data is shown as missing.
-
-## 11. Part 03: valuation and quantitative engines (done)
-- **Data** (`src/research.js`, cached on disk in `data/`, stale cache used if a source fails):
-  - SEC EDGAR XBRL companyfacts for fundamentals. The SEC User-Agent is a generic tool name, with no personal contact details.
-  - Yahoo daily and monthly prices.
-  - US Treasury yields for the risk-free rate.
-- **Universe:** 54 US large caps with CIKs verified against EDGAR. Banks, brokers and insurers (JPM, BAC, WFC, GS, MS, BRK-B) are excluded from FCFF models. BRK-B per-share figures are divided by 1500.
-- **Valuation** (`lib/valuation.js`): DCF, dividend discount, comparables (peer quartiles, the company itself excluded), earnings-based, asset-based and historical multiples. Each model gives a conservative, base and optimistic value, with its inputs, assumptions and limitations.
-  - `synthesize()` never averages. One primary model sets the range; the others are checks, and their agreement and dispersion are reported. If the range is too wide or the models disagree, the status is "uncertain".
-  - Growth, margins, discount rate, terminal growth, EPS, capex, debt and cash can be edited in the browser. The models recompute there because `lib/` is shared (UMD).
-  - `scenarios()` ranks which assumption moves the value most.
-- **Fundamentals** (`lib/fundamentals.js`): growth, margins, earnings quality, FCF, leverage, ROIC, dilution, dividend cover and deterioration flags.
-- **Quant** (`lib/quant.js`): multi-period returns, moving averages, RSI, relative strength, trend persistence, acceleration and volume confirmation.
-  - Exhaustion: distance from moving averages, return-distribution percentile, volatility expansion, divergence. This is never presented as a reversal signal.
-  - Volatility: realised volatility, clustering, drawdowns and tail estimates (VaR/ES).
-  - Liquidity: spread, ADV, turnover, Amihud ratio and estimated cost and slippage. These are theoretical; real execution can differ.
-- **Regime** (`lib/regime.js`): independent indicators (SPY trend, VIX, breadth, sector rotation, liquidity stress) vote. The vote split is shown as the uncertainty.
-
-## 12. Part 04: decision intelligence (done)
-- **Engine** (`lib/decision.js`): three independent scores (opportunity, risk, confidence), each listing its components and the reason for each. A component that cannot be measured is excluded from opportunity and risk and counts as 0 for confidence. Scores are rounded to 5 points, since finer precision would be false.
-- **Interpretation text** is written for each combination, e.g. "attractive but highly uncertain". There is never a buy or sell signal.
-- **Uncertainty decomposition:** supporting and contradicting evidence (contradicting evidence shown first), unknowns, assumptions, alternative explanations, failure conditions and model limits.
-- **Scenarios:** growth −3 pp, higher discount rate, lower margins, sector multiples contracting, more debt and EPS changes. Each shows how the value and status change.
-- **Comparison** (`compare()`) shows relative valuation, risk, opportunity, confidence and data quality. It never selects a winner.
-- **Calibration** (`lib/calibrate.js`): checks cheapness (earnings yield) and 12−1 momentum against the following quarter's return, using only filings already public at each formation date. The result feeds the "historical performance" part of confidence.
-- **API:** `/api/research/universe`, `/api/research/company?sym=`, `/api/research/regime`.
-
-## 13. Known limitations (Parts 02–04)
-- Yahoo remains unofficial for prices. EDGAR covers US filers only. There are no analyst estimates, so "earnings revisions" come from changes between filings, not from consensus.
-- The calibration sample is small (54 stocks, a few years of quarters), so its results are indicative only.
-- There is no out-of-sample backtesting of the scores yet (roadmap: scenarios and backtesting).
+## 10. Existing implementation of Parts 02–04 (first pass, before the re-audit)
+Kept for reference. It will be reviewed when each part is re-sent.
+- **Part 02 (heat map):**
+  - `public/heat.js`, `lib/treemap.js`.
+  - Size: market cap, volume or turnover. Colour: 1D, 1W, 1M, 3M or sector-relative return.
+  - Valuation marker and status border; hover card; research panel; comparison; legend; source and timestamp tags.
+- **Part 03 (engines):**
+  - `lib/valuation.js`: six models, never averaged. A primary model sets the range and the others are checks. Scenarios and editable assumptions.
+  - `lib/fundamentals.js`, `lib/quant.js`, `lib/regime.js`.
+- **Part 04 (decision):**
+  - `lib/decision.js`: three independent scores, with evidence, unknowns, failure conditions and a comparison that never picks a winner.
+  - `lib/calibrate.js`: historical IC.
+- **Known issues:** see §2.6, items 1, 2 and 4–9.
