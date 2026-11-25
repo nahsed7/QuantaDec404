@@ -1,0 +1,8 @@
+{
+  "name": "quantadec404",
+  "private": true,
+  "description": "Private market research workstation: valuation-integrated heat map, validation, portfolio research, paper trading. No npm dependencies.",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "scripts": { "start": "node server.js", "test": "node --test test/*.test.js" }
+}

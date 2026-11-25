@@ -30,12 +30,13 @@ const PROVIDERS = {
 const HOST = new Map(Object.entries(PROVIDERS).flatMap(([id, p]) => p.hosts.map(h => [h, id])));
 
 function create() {
+  let seq = 0;                                         // event order (timestamps can tie within a millisecond)
   const health = Object.fromEntries(Object.keys(PROVIDERS).map(id => [id, { ok: 0, fail: 0, lastOk: null, lastError: null, lastErrorAt: null, latencyMs: [], inFlight: 0 }]));
   // Record one request outcome. url: full URL (the host picks the provider).
   function record(url, ok, ms, err) {
     let host = ''; try { host = new URL(url).host; } catch {}
     const id = HOST.get(host); if (!id) return; const h = health[id];
-    if (ok) { h.ok++; h.lastOk = Date.now(); } else { h.fail++; h.lastError = String(err?.message || err || 'error').slice(0, 300); h.lastErrorAt = Date.now(); }
+    if (ok) { h.ok++; h.lastOk = Date.now(); h.okSeq = ++seq; } else { h.fail++; h.lastError = String(err?.message || err || 'error').slice(0, 300); h.lastErrorAt = Date.now(); h.errSeq = ++seq; }
     if (S.fin(ms)) { h.latencyMs.push(ms); if (h.latencyMs.length > 50) h.latencyMs.shift(); }
   }
   // fetch() wrapper that records health (used by every adapter in the app).
@@ -47,7 +48,7 @@ function create() {
   function status() {
     const now = Date.now();
     return Object.entries(PROVIDERS).map(([id, p]) => {
-      const h = health[id], recentFail = h.lastErrorAt && (!h.lastOk || h.lastErrorAt > h.lastOk);
+      const h = health[id], recentFail = !!h.errSeq && (h.errSeq > (h.okSeq || 0));
       const configured = p.key ? !!process.env[p.key] : true;
       return { id, name: p.name, kinds: p.kinds, data: p.data, licence: p.licence, needsKey: p.key || null, configured, disabled: !!p.disabled,
         ok: h.ok, fail: h.fail, lastOk: h.lastOk, lastError: h.lastError, lastErrorAt: h.lastErrorAt, medianLatencyMs: S.median(h.latencyMs),

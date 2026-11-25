@@ -5,7 +5,7 @@ Repository: github.com/nahsed7/QuantaDec404 (MIT). The full nine-part brief is i
 **Status, 2026-11-25:**
 - **Part 01 has been redone from scratch at the user's request**, as a fresh audit of the current code (§2).
 - Parts 02–09 will be implemented one at a time, each with tests, a spec update and its own commit.
-- **Done:** Part 02 heat map (§11), Part 03 valuation and quantitative engines (§12), Part 05 historical validation (§13), Part 04 decision intelligence (§14), Part 06 portfolio laboratory (§15), Part 07 trading and execution architecture (§16).
+- **Done:** Parts 01–09 (§2, §11–§18). Part 10 (visualisation and latency) is next.
 - The user then sent Parts 04–09 together and added a Part 10 (intuitive visualisation, plus cutting the live-chart delay to 0.1 s or less). They asked for all ten to be completed in order, with the best free choices made automatically and API keys requested once at the end.
 - Order agreed: 03 → 05 → 04 → 06 → 07 → 08 → 09 → 10. Validation comes before the decision-weight rework, so weights can be capped by evidence.
 - Live trading is disabled.
@@ -584,3 +584,45 @@ Example portfolio: AAPL 30 %, MSFT 20 %, TSMC 20 %, Novo 15 %, JPM 15 % (US$ 250
 - prospective log once a day, outcomes only after the horizon.
 
 **Remaining:** Part 09 (full verification and final documentation) and Part 10 (intuitive visualisation, plus a live-chart delay of 0.1 s or less).
+
+## 18. Part 09: testing, verification and final state (done, 2026-11-25)
+**Deliverables:**
+- **Architecture:** `docs/ARCHITECTURE.md`.
+- **Setup and dependencies:** `README.md`.
+- **Data providers:** `docs/DATA_PROVIDERS.md`.
+- **Testing report:** `docs/TESTING.md`. 121 tests pass, including interface tests and traceability tests on a recorded real snapshot.
+- **Paper-trading guide:** `docs/PAPER_TRADING.md`.
+- **Models:** `docs/MODELS.md`.
+
+### 18.1 Feature completion matrix
+| Part | Requirement area | Status | Where |
+|---|---|---|---|
+| 01 | Audit, architecture, roadmap | ✅ | §2–§6 |
+| 02 | Multidimensional, valuation-integrated heat map; research panel; comparison; legend; data integrity | ✅ | §11, `public/heat.js`, `lib/encodings.js` |
+| 02 | Earnings revisions (analyst) | ⚠️ reported EPS change only; analyst data needs a Finnhub key | |
+| 03 | Six valuation models with ranges, sensitivity, freshness, confidence; disagreements; editable assumptions; scenarios | ✅ | §12, `lib/valuation.js` |
+| 03 | Momentum, exhaustion, volatility, liquidity, fundamentals, regimes | ✅ | `lib/quant.js`, `lib/fundamentals.js`, `lib/regime.js` |
+| 03 | Market depth for equities | ⚠️ not available free; labelled | |
+| 04 | Three independent scores, explanations, uncertainty decomposition, scenarios, traceability, comparison | ✅ | §14, `lib/decision.js` |
+| 04 | Calibration against outcomes | ✅ for signal families (Part 05 caps); composite not reconstructible historically (stated) | |
+| 05 | Chronological split, walk-forward, rolling, out-of-sample, regimes, costs, leakage prevention, point-in-time EPS, benchmarks, metrics, reliability, reproducible experiments | ✅ | §13, `lib/backtest.js` |
+| 05 | Survivorship and delisted stocks | ⚠️ not removable with free data; disclosed, with a survivorship-gap bound | |
+| 06 | Portfolio risk, diversification, exposures, liquidity, scenarios, allocations, opportunity cost, visualisation | ✅ | §15, `lib/portfolio.js` |
+| 07 | Ticket in the company panel; market, limit, stop and stop-limit; sizing; fees, spread, slippage; partial fills and rejections; six layers; risk controls; live disabled; credentials in `.env` | ✅ | §16 |
+| 07 | Alpaca paper adapter | ⚠️ implemented, not wired; untested without keys | `src/brokers.js` |
+| 08 | Provider layer, health, fallbacks, integrity monitor, ten sections, custom layout, themes, caching, retention | ✅ | §17 |
+| 08 | News headlines | ⚠️ SEC filings only; headlines need a Finnhub key | |
+| 09 | Automated tests in all 12 categories, reproducible datasets, traceability, documentation | ✅ | `docs/TESTING.md` |
+| 10 | Intuitive visualisation; live-chart delay ≤ 0.1 s | ⏳ next | |
+
+### 18.2 Known limitations (consolidated)
+1. **Data licensing:** Yahoo is unofficial and personal-use only. Prices may break or rate-limit without notice; quotes are delayed 15–20 minutes.
+2. **Survivorship bias:** the universe is today's large caps, and there is no free history for delisted stocks.
+3. **Small samples:** 55 US stocks × about 10 years of monthly data; one test segment of about 21 months.
+4. **Spreads:** a liquidity-tier model (an assumption) until a quote feed is configured. Equity market depth is unavailable.
+5. **Captive-finance groups** (Honda, Toyota): the DCF is misspecified and flagged. SMFG and BP have XBRL gaps and are flagged.
+6. **Point-in-time history:** β and the ERP in historical valuations are today's values.
+7. **Prospective log:** started 2026-11-25. The first 1-month outcomes arrive 2026-12-25.
+8. **Paper fills:** they follow the delayed feed, about 15–20 minutes after the order.
+9. **UI tests:** a DOM stand-in, not real browsers.
+
