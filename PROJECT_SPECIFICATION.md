@@ -5,7 +5,7 @@ Repository: github.com/nahsed7/QuantaDec404 (MIT). The full nine-part brief is i
 **Status, 2026-11-25:**
 - **Part 01 has been redone from scratch at the user's request**, as a fresh audit of the current code (§2).
 - Parts 02–09 will be implemented one at a time, each with tests, a spec update and its own commit.
-- **Done:** Parts 01–09 (§2, §11–§18). Part 10 (visualisation and latency) is next.
+- **Done:** Parts 01–10 (§2, §11–§19).
 - The user then sent Parts 04–09 together and added a Part 10 (intuitive visualisation, plus cutting the live-chart delay to 0.1 s or less). They asked for all ten to be completed in order, with the best free choices made automatically and API keys requested once at the end.
 - Order agreed: 03 → 05 → 04 → 06 → 07 → 08 → 09 → 10. Validation comes before the decision-weight rework, so weights can be capped by evidence.
 - Live trading is disabled.
@@ -613,7 +613,7 @@ Example portfolio: AAPL 30 %, MSFT 20 %, TSMC 20 %, Novo 15 %, JPM 15 % (US$ 250
 | 08 | Provider layer, health, fallbacks, integrity monitor, ten sections, custom layout, themes, caching, retention | ✅ | §17 |
 | 08 | News headlines | ⚠️ SEC filings only; headlines need a Finnhub key | |
 | 09 | Automated tests in all 12 categories, reproducible datasets, traceability, documentation | ✅ | `docs/TESTING.md` |
-| 10 | Intuitive visualisation; live-chart delay ≤ 0.1 s | ⏳ next | |
+| 10 | Intuitive visualisation; live-chart delay ≤ 0.1 s | ✅ crypto ≈ 0.09 s; FX ≈ 0.12 s (network floor) | §19 |
 
 ### 18.2 Known limitations (consolidated)
 1. **Data licensing:** Yahoo is unofficial and personal-use only. Prices may break or rate-limit without notice; quotes are delayed 15–20 minutes.
@@ -625,4 +625,41 @@ Example portfolio: AAPL 30 %, MSFT 20 %, TSMC 20 %, Novo 15 %, JPM 15 % (US$ 250
 7. **Prospective log:** started 2026-11-25. The first 1-month outcomes arrive 2026-12-25.
 8. **Paper fills:** they follow the delayed feed, about 15–20 minutes after the order.
 9. **UI tests:** a DOM stand-in, not real browsers.
+
+## 19. Part 10: intuitive visualisation and latency (done, 2026-11-25)
+The user's request: "a 10th layer entirely focusing on intuitive visualization rather than a messy incomprehensible graph", and a live delay of about 0.1 s.
+
+### 19.1 Latency: measured per hop from the phone, before → after
+| Hop | Before | After | Change |
+|---|---|---|---|
+| Binance trade → browser (crypto) | p50 101 ms, p90 215 ms (`data-stream.binance.vision`) | **p50 93 ms, p90 132 ms** (`stream.binance.com:9443`, the mirror kept as automatic fallback) | faster endpoint |
+| Server → browser (FX SSE) | p50 18 ms | **p50 8 ms** | 40 ms flush timer replaced by end-of-turn flush; Nagle disabled on every socket; SSE headers flushed |
+| Kraken trade → browser (FX composite) | p50 152 ms | **p50 118 ms** | of which ~110 ms is the mobile-network distance to Kraken: a physical floor, no code can remove it |
+| TrueFX interbank polling | 300 ms (~150 ms average detection) | 200 ms (~100 ms) | TrueFX itself updates about once a second |
+| Message → drawn frame | not measured | shown live ("→ screen") | the canvas redraws every display frame (~16 ms at 60 Hz) |
+
+**Clock finding:** the phone's clock runs about **450 ms behind exchange time**. Uncorrected, that alone makes every feed look about 0.4–0.5 s late. The status bar corrects for it against Binance server time and now shows the offset ("clock −450 ms"), the feed delay and the tick-to-screen delay separately.
+
+### 19.2 Visualisation: from dense to readable
+- **§2 live market: Simple mode by default.**
+  - It shows the live chart, a **plain-language "Right now" paragraph** (price change over 5 minutes, who is in control, activity vs the previous half hour, spread vs normal), the depth chart and the demo account.
+  - The 10-dimensional 3D view, its controls, the encoding table and the inspector moved behind "Show advanced 3D view", which is remembered per browser. In Simple mode the 3D chart is not rendered at all, so it costs no CPU.
+- **§1 market pulse:** one sentence above the map covering breadth, the typical move, how many companies are moving away from or toward their estimated value range, and the biggest gains and falls.
+- **Company "at a glance" card** at the top of the Assessment tab:
+  - an SVG **valuation thermometer** (price marker against the conservative…base…optimistic range, drawn to scale, coloured by classification);
+  - **three score bars** with a plain meaning each, the reminder that they are independent, and the two strongest reasons against and for.
+- **Consistent colour language** across sections:
+  - cyan = below the estimated range;
+  - magenta = above it;
+  - amber = too uncertain;
+  - green/red = up/down or opportunity/risk;
+  - category colours in validation (grey in-sample, blue validation, green test, violet walk-forward).
+
+### 19.3 Tests
+- **122 pass.** New: the pulse sentence and the glance card for US, international, bank and price-only companies, with no invalid number even inside SVG attributes.
+
+### 19.4 Limitations
+- The FX delay floor (~110 ms) is network distance from the phone's mobile connection. From the PC over the hotspot, crypto goes direct from the PC; FX adds the hotspot hop of a few ms.
+- Equity quotes stay delayed 15–20 minutes (free data). Real-time US quotes need the Alpaca key.
+- Tick-to-screen is measured in the browser and shown live; it was not measured on the user's PC from here.
 

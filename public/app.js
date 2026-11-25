@@ -8,7 +8,15 @@ const getJSON = async u => { const r = await fetch(u); if (!r.ok) throw new Erro
 const CFG = { responsive: true, displaylogo: false };
 const IV_MS = { '1s': 1e3, '1m': 60e3, '5m': 300e3, '15m': 900e3 };
 const IV_UNIT = { '1s': 's', '1m': 'min', '5m': '×5 min', '15m': '×15 min' };
-const STREAM = 'wss://data-stream.binance.vision/stream?streams=';
+// Binance market-data WebSocket. Measured from the phone (2026-11-25): stream.binance.com p50 93 ms / p90 132 ms after the
+// exchange event; the data-stream.binance.vision mirror p50 101 / p90 215 ms. The faster endpoint is used first; if it
+// fails to open (it is blocked in some countries) the mirror is used for the rest of the session.
+const STREAMS = ['wss://stream.binance.com:9443/stream?streams=', 'wss://data-stream.binance.vision/stream?streams='];
+let streamIdx = 0;
+const STREAM_URL = () => STREAMS[streamIdx];
+// Tick-to-screen latency: time from a message arriving to the next drawn frame of the live chart.
+const LAT = { rx: 0, pending: false, screen: [] };
+const markRx = () => { if (!LAT.pending) { LAT.rx = performance.now(); LAT.pending = true; } };
 
 /* ---------- theme ---------- */
 try { const t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
@@ -39,7 +47,7 @@ setInterval(() => {
   const q = M.quote, age = q ? Date.now() - q.t : null;
   $('status').innerHTML = `<span>UTC ${new Date().toISOString().slice(11, 19)}</span>` +
     Object.entries(status).map(([k, v]) => `<span>${dot(v)}${k}: ${v}</span>`).join('') +
-    (isFX(M.sym) && FXQ[M.sym.slice(3)] ? `<span>feed ${FXQ[M.sym.slice(3)].src}${FXQ[M.sym.slice(3)].src === 'composite' ? ` · basis ${(FXQ[M.sym.slice(3)].basis / pipOf(M.sym)).toFixed(2)} pip · tracking ±${FXQ[M.sym.slice(3)].te == null ? '–' : (FXQ[M.sym.slice(3)].te / pipOf(M.sym)).toFixed(2)} pip` : ''}</span>` : '') + `<span>${M.sym} · ${M.iv} · ${M.bars.length} bars</span><span>quotes/s ${M.qps}</span><span>last quote ${age == null ? '–' : age + ' ms ago'}</span><span>chart ${fpsShown} fps · 3D ${heavyShown} fps</span><span>feed latency ${CLK.lat.length ? '≈ ' + Math.round(CLK.lat.slice().sort((x, y) => x - y)[CLK.lat.length >> 1]) + ' ms (±' + Math.round(CLK.rtt / 2) + ')' : '–'}</span>`;
+    (isFX(M.sym) && FXQ[M.sym.slice(3)] ? `<span>feed ${FXQ[M.sym.slice(3)].src}${FXQ[M.sym.slice(3)].src === 'composite' ? ` · basis ${(FXQ[M.sym.slice(3)].basis / pipOf(M.sym)).toFixed(2)} pip · tracking ±${FXQ[M.sym.slice(3)].te == null ? '–' : (FXQ[M.sym.slice(3)].te / pipOf(M.sym)).toFixed(2)} pip` : ''}</span>` : '') + `<span>${M.sym} · ${M.iv} · ${M.bars.length} bars</span><span>quotes/s ${M.qps}</span><span>last quote ${age == null ? '–' : age + ' ms ago'}</span><span>chart ${fpsShown} fps · 3D ${heavyShown} fps</span><span title="exchange event → browser, clock-corrected against Binance server time (± half the round trip)">feed ${CLK.lat.length ? '≈ ' + Math.round(CLK.lat.slice().sort((x, y) => x - y)[CLK.lat.length >> 1]) + ' ms (±' + Math.round(CLK.rtt / 2) + ')' : '–'}</span><span title="message arrival → drawn on the live chart (median of the last 120)">→ screen ${LAT.screen.length ? Math.round(LAT.screen.slice().sort((x, y) => x - y)[LAT.screen.length >> 1]) + ' ms' : '–'}</span><span title="your device clock vs exchange time (corrected in the latency figure)">clock ${CLK.ok ? (CLK.off >= 0 ? '−' : '+') + Math.abs(Math.round(CLK.off)) + ' ms' : '–'}</span>`;
   M.qps = M.qcount; M.qcount = 0;
 }, 1000);
 
@@ -63,7 +71,7 @@ function loop(ts) {
   if (view === 'flow' || view === 'state') dirty[view] = true;      // time axis slides continuously
   if (!dirty[view]) return;
   lastFrame = ts; dirty[view] = false; heavyFrames++;
-  const draw = ({ heat: drawHeat, state: drawState, flow: drawFlow, lab: drawLab })[view];   // other views render themselves
+  const draw = ({ heat: drawHeat, state: () => { if (!STATE_SIMPLE()) drawState(); }, flow: drawFlow, lab: drawLab })[view];   // other views render themselves
   if (draw) try { draw(); } catch (e) { console.error(e); }
 }
 requestAnimationFrame(loop);
@@ -110,7 +118,7 @@ function openFX() {
   fxES.onopen = () => { if (isFX(M.sym)) setStatus('stream', 'live'); };
   fxES.onerror = () => { if (isFX(M.sym)) setStatus('stream', 'retrying'); };
   fxES.onmessage = e => {
-    const touched = new Map(), rx = Date.now();
+    const touched = new Map(), rx = Date.now(); markRx();
     for (const ev of JSON.parse(e.data)) {
       if (ev.k === 'tq') { FXT[ev.pair] = { bid: ev.bid, ask: ev.ask, t: ev.t, rx }; touched.set(ev.pair, ev.t);
         if (CLK.ok && 'FX:' + ev.pair === M.sym && fxEffective(ev.pair)?.src === 'interbank') { CLK.lat.push(rx + CLK.off - ev.t); if (CLK.lat.length > 60) CLK.lat.shift(); } }
@@ -178,17 +186,19 @@ async function startMarket() {
 }
 function openStream(gen) {
   const s = M.sym.toLowerCase();
-  const ws = M.ws = new WebSocket(STREAM + [`${s}@kline_${M.iv}`, `${s}@aggTrade`, `${s}@bookTicker`].join('/'));
-  ws.onopen = () => setStatus('stream', 'live');
+  const ws = M.ws = new WebSocket(STREAM_URL() + [`${s}@kline_${M.iv}`, `${s}@aggTrade`, `${s}@bookTicker`].join('/'));
+  let opened = false;
+  ws.onopen = () => { opened = true; setStatus('stream', 'live'); };
   ws.onmessage = e => {
     if (gen !== M.gen) return;
-    const { stream, data } = JSON.parse(e.data);
+    const { stream, data } = JSON.parse(e.data); markRx();
     if (stream.endsWith('@bookTicker')) onQuote(data); else if (stream.endsWith('@aggTrade')) onTrade(data); else onKline(data.k);
   };
-  ws.onclose = () => { if (gen === M.gen) { setStatus('stream', 'retrying'); setTimeout(() => gen === M.gen && openStream(gen), 2000); } };
+  ws.onclose = () => { if (!opened && streamIdx < STREAMS.length - 1) streamIdx++; if (gen === M.gen) { setStatus('stream', 'retrying'); setTimeout(() => gen === M.gen && openStream(gen), opened ? 2000 : 200); } };
 }
 function onQuote(d) {
   const bid = +d.b, ask = +d.a, mid = (bid + ask) / 2, now = Date.now();
+  if (mid > 0) { NAR.spreads.push((ask - bid) / mid); if (NAR.spreads.length > 2000) NAR.spreads.splice(0, 500); }
   if (M.quote && mid !== M.quote.mid) M.dir = mid > M.quote.mid ? 1 : -1;
   M.quote = { bid, ask, mid, t: now }; M.qcount++;
   const tfMs = CND.tf * 1000, ct = Math.floor(now / tfMs) * tfMs;
@@ -233,6 +243,33 @@ async function loadSent() {
 async function loadFng() { try { M.fng = await getJSON('/api/fng'); } catch {} }
 setInterval(loadSent, 60000); loadFng(); setInterval(loadFng, 600000);
 
+/* ---------- §2 simple / advanced mode and the plain-language "right now" summary ---------- */
+// Simple mode (default) shows the live chart, a one-paragraph summary, the depth chart and the demo account; the
+// 10-dimensional 3D view is optional because it is powerful but hard to read at a glance.
+const NAR = { spreads: [] };
+const STATE_SIMPLE = () => document.getElementById('state')?.classList.contains('simple');
+(function initStateMode() {
+  const sec = document.getElementById('state'), btn = document.getElementById('stMode'); if (!sec || !btn) return;
+  let simple = true; try { simple = localStorage.getItem('state-mode') !== 'advanced'; } catch {}
+  const apply = () => { sec.classList.toggle('simple', simple); btn.textContent = simple ? 'Show advanced 3D view' : 'Back to simple view'; if (!simple) { dirty.state = true; setTimeout(() => { try { Plotly.Plots.resize('p8d'); } catch {} }, 50); } };
+  btn.onclick = () => { simple = !simple; try { localStorage.setItem('state-mode', simple ? 'simple' : 'advanced'); } catch {} apply(); };
+  apply();
+})();
+const word = (x, pos, neg, flat = 'flat') => x > 0 ? pos : x < 0 ? neg : flat;
+function narrate() {
+  const el = document.getElementById('plainNow'); if (!el || view !== 'state') return;
+  const now = Date.now(), W = 5 * 60e3, tr = T.trades.filter(t => t.t > now - W), prev = T.trades.filter(t => t.t > now - 35 * 60e3 && t.t <= now - W);
+  if (tr.length < 5) { el.innerHTML = 'Waiting for enough trades to describe the last 5 minutes…'; return; }
+  const p0 = tr[0].p, p1 = tr[tr.length - 1].p, ch = p1 / p0 - 1, qty = tr.reduce((a, t) => a + t.q, 0), buy = tr.filter(t => t.buy).reduce((a, t) => a + t.q, 0), share = qty ? buy / qty : 0.5;
+  const rate = tr.length / 5, prate = prev.length / 30, busy = prate > 0 ? rate / prate : null;
+  const sp = M.quote?.mid ? (M.quote.ask - M.quote.bid) / M.quote.mid : null, spMed = NAR.spreads.length > 50 ? NAR.spreads.slice().sort((a, b) => a - b)[NAR.spreads.length >> 1] : null;
+  const dp = Math.abs(ch) < 0.0002 ? 'is roughly unchanged' : `is <b class="${ch > 0 ? 'up' : 'down'}">${word(ch, 'up', 'down')} ${(100 * Math.abs(ch)).toFixed(2)} %</b>`;
+  const pressure = share > 0.6 ? '<b class="up">buyers are in control</b>' : share < 0.4 ? '<b class="down">sellers are in control</b>' : 'buying and selling are <b>balanced</b>';
+  const activity = busy == null ? '' : busy > 1.5 ? ` Trading is <b>${busy.toFixed(1)}× busier</b> than in the previous half hour.` : busy < 0.67 ? ` Trading is <b>quieter</b> than in the previous half hour (${busy.toFixed(1)}×).` : ' Trading activity is normal.';
+  const spread = sp != null && spMed ? (sp > 2 * spMed ? ` The bid–ask spread is <b class="down">wider than usual</b> (${(1e4 * sp).toFixed(2)} bp vs ${(1e4 * spMed).toFixed(2)} bp), so trading costs more right now.` : ` The spread is normal (${(1e4 * sp).toFixed(2)} bp).`) : '';
+  el.innerHTML = `<b>Right now (${String(M.sym).replace(/[<>&"]/g, "")}):</b> over the last 5 minutes the price ${dp}, and ${pressure} (${Math.round(100 * share)} % of the traded volume was bought aggressively).${activity}${spread} <span class="muted">A description of recent trades, not a forecast.</span>`;
+}
+setInterval(narrate, 1000);
 /* ---------- clock sync with Binance (for honest latency numbers) ---------- */
 const CLK = { off: 0, rtt: 0, ok: false, lat: [] };
 async function syncClock() {
@@ -257,7 +294,7 @@ async function startCandles() {
     CND.bars = ks.map(k => ({ t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5], tb: +k[9] }));
   } catch {}
   const open = () => {
-    const ws = CND.ws = new WebSocket(STREAM + `${M.sym.toLowerCase()}@kline_${base}`);
+    const ws = CND.ws = new WebSocket(STREAM_URL() + `${M.sym.toLowerCase()}@kline_${base}`);
     ws.onmessage = e => {
       if (gen !== CND.gen) return;
       const k = JSON.parse(e.data).data.k, b = { t: k.t, o: +k.o, h: +k.h, l: +k.l, c: +k.c, v: +k.v, tb: +k.V };
@@ -359,6 +396,7 @@ LV.cv.addEventListener('mouseleave', () => { LV.mouse = null; });
 const niceStep = (range, n) => { const raw = range / n || 1, p = 10 ** Math.floor(Math.log10(raw)), m = raw / p; return (m < 1.5 ? 1 : m < 3 ? 2 : m < 7 ? 5 : 10) * p; };
 const TSTEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400].map(x => x * 1000);
 function drawLiveCanvas(ts) {
+  if (LAT.pending) { LAT.pending = false; LAT.screen.push(performance.now() - LAT.rx); if (LAT.screen.length > 120) LAT.screen.shift(); }
   const L = LV, wrap = L.cv.parentElement, r = wrap.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
   if (!r.width || !r.height) return;
   if (r.width !== L.w || r.height !== L.h || dpr !== L.dpr) {

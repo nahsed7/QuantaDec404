@@ -58,12 +58,26 @@
     }
     box.innerHTML = html.join('');
     legend(colK, sizeK, d);
+    pulse(shown);
     const err = Object.keys(d.errors || {}), nIntl = shown.filter(s => s.region === 'International').length, noFil = shown.filter(s => s.hasFilings === false).length;
     $('hmCaption').textContent = `${shown.length} large companies (${shown.length - nIntl} US, ${nIntl} international${noFil ? `, ${noFil} without a free filings source` : ''}) grouped by ${grp.label.toLowerCase()}.`;
     $('hmStatus').innerHTML = d.builtAt ? `research built ${new Date(d.builtAt).toLocaleString()} · prices recomputed ${new Date(d.recomputedAt).toLocaleTimeString()}${err.length ? ` · <span class="warn">failed: ${esc(err.join(', '))}</span>` : ''}`
       : `Loading research data… ${d.loaded}/${d.total} companies (first load downloads ~25 MB of SEC filings, then caches them for a week).`;
   }
 
+  // One plain-language sentence about the whole map: breadth, typical move, moves relative to estimated value, movers.
+  function pulse(shown) {
+    const el = $('hmPulse'); if (!el) return;
+    const m = shown.filter(s => fin(s.change1d)); if (m.length < 5) { el.textContent = ''; return; }
+    const up = m.filter(s => s.change1d > 0).length, med = S.median(m.map(s => s.change1d)), ctx = m.map(s => [s, E.moveContext(s).code]);
+    const away = ctx.filter(([, c]) => c === 'away').length, toward = ctx.filter(([, c]) => c === 'toward').length;
+    const sorted = m.slice().sort((a, b) => b.change1d - a.change1d), name = s => `${esc(s.label || s.sym)} ${pc(s.change1d)}`;
+    const breadth = up / m.length > 0.65 ? '<b class="up">broadly up</b>' : up / m.length < 0.35 ? '<b class="down">broadly down</b>' : '<b>mixed</b>';
+    el.innerHTML = `<b>Today:</b> the market is ${breadth}: ${up} of ${m.length} companies rose; the typical move is ${pc(med)}.
+      ${away ? `<b>${away}</b> are moving <i>further away</i> from their estimated value range` : ''}${away && toward ? ', ' : ''}${toward ? `<b>${toward}</b> are moving <i>back toward</i> it` : ''}${away || toward ? ' (corner flags).' : ''}
+      Biggest gains: ${sorted.slice(0, 3).map(name).join(', ')}. Biggest falls: ${sorted.slice(-3).reverse().map(name).join(', ')}.
+      <span class="muted">Moves use delayed quotes or the last close; estimated ranges are uncertain.</span>`;
+  }
   function regimeStrip(d) {
     const r = d.regime, el = $('hmRegime'); if (!el) return;
     if (!r?.available) { el.innerHTML = '<span class="muted">Market regime: not available yet.</span>'; return; }
@@ -157,9 +171,37 @@
       <td>${p.evidence ? `${esc(EVS[p.evidence.status] || p.evidence.status)}${fin(p.evidence.testSharpe) ? `<br><span class="muted">${esc(p.evidence.family)}: test Sharpe ${p.evidence.testSharpe.toFixed(2)}, walk-forward ${pc(p.evidence.walkForwardExcess)}/yr, beats ${pu(p.evidence.randomPercentile, 0)} of random</span>` : ''}` : '<span class="muted">n/a</span>'}</td>
       <td>${esc(p.explain)}</td><td class="muted">${esc(p.calc || '')}${p.source ? ` (${esc(p.source)})` : ''}${p.weightRationale ? `<br>Weight: ${esc(p.weightRationale)}` : ''}</td></tr>`).join('')}</table></div>`;
   }
+  // "At a glance": the valuation thermometer (price against the conservative…optimistic range, drawn to scale),
+  // the three independent scores as bars, the verdict and the strongest reasons on each side.
+  function glance(d) {
+    const v = d.valuation.synthesis, e = d.decision.evidence, cur = esc(d.ccy || '');
+    let thermo = '<p class="muted">No valuation range: too little data to estimate value.</p>';
+    if (fin(v.low) && fin(v.high) && fin(d.price) && v.high > v.low) {
+      const lo = Math.min(v.low, d.price) * 0.92, hi = Math.max(v.high, d.price) * 1.08, X = x => 20 + 560 * (x - lo) / (hi - lo);
+      const col = (T.STATUS[v.status] || {}).colour || css('--accent2'), px = X(d.price);
+      thermo = `<svg class="thermo" viewBox="0 0 600 78" role="img" aria-label="Price ${num(d.price)} against estimated value range ${num(v.low)} to ${num(v.high)}">
+        <line x1="20" x2="580" y1="34" y2="34" stroke="currentColor" stroke-opacity=".25" stroke-width="2"/>
+        <rect x="${X(v.low)}" y="24" width="${X(v.high) - X(v.low)}" height="20" rx="4" fill="${css('--accent2')}" fill-opacity=".35"/>
+        ${fin(v.base) ? `<line x1="${X(v.base)}" x2="${X(v.base)}" y1="20" y2="48" stroke="currentColor" stroke-width="2"/>` : ''}
+        <path d="M${px - 7},8 L${px + 7},8 L${px},20 Z" fill="${col}"/><line x1="${px}" x2="${px}" y1="20" y2="50" stroke="${col}" stroke-width="3"/>
+        <text x="${px}" y="6" text-anchor="middle" font-size="11" fill="currentColor">price ${num(d.price)}</text>
+        <text x="${X(v.low)}" y="64" text-anchor="middle" font-size="10" fill="currentColor" fill-opacity=".8">conservative ${num(v.low)}</text>
+        ${fin(v.base) ? `<text x="${X(v.base)}" y="76" text-anchor="middle" font-size="10" fill="currentColor">base ${num(v.base)}</text>` : ''}
+        <text x="${X(v.high)}" y="64" text-anchor="middle" font-size="10" fill="currentColor" fill-opacity=".8">optimistic ${num(v.high)}</text></svg>
+        <p class="glance-v"><b style="color:${col}">${esc((T.STATUS[v.status] || {}).label || v.status)}</b>: the price is ${fin(v.premium) ? `${pu(Math.abs(v.premium), 0)} ${v.premium < 0 ? 'below' : 'above'}` : 'n/a vs'} the base estimate (${cur}, ${esc(v.primaryName || modelName(d, v.primary))}). An estimate, not an exact value.</p>`;
+    }
+    const bar = (name, s, cls, meaning) => `<div class="gbar"><span class="gname">${name}</span><span class="gtrack"><span class="gfill ${cls}" style="width:${fin(s.score) ? s.score : 0}%"></span></span><span class="gval">${s.score ?? '–'}</span><span class="muted gmean">${s.withheld ? 'withheld: too few inputs' : meaning(window.QDecision.band(s.score))}</span></div>`;
+    return `<div class="glance">${thermo}
+      ${bar('Opportunity', d.decision.opportunity, 'g-opp', b => ({ high: 'looks attractive on these measures', low: 'unattractive on these measures', moderate: 'mixed' }[b] || 'unknown'))}
+      ${bar('Risk', d.decision.risk, 'g-risk', b => ({ high: 'riskier than most tracked companies', low: 'less risky than most', moderate: 'average risk' }[b] || 'unknown'))}
+      ${bar('Confidence', d.decision.confidence, 'g-conf', b => ({ high: 'well-supported evidence', low: 'treat the assessment as highly uncertain', moderate: 'moderate' }[b] || 'unknown'))}
+      <p class="muted">The three scores are independent: a high opportunity score does not mean high confidence.</p>
+      <div class="cp-grid2"><div class="cp-ev con"><h4>Strongest reasons against</h4><ul>${e.contradicting.slice(0, 2).map(x => `<li>${esc(x)}</li>`).join('') || '<li class="muted">None identified.</li>'}</ul></div>
+        <div class="cp-ev sup"><h4>Strongest reasons for</h4><ul>${e.supporting.slice(0, 2).map(x => `<li>${esc(x)}</li>`).join('') || '<li class="muted">None identified.</li>'}</ul></div></div></div>`;
+  }
   function tabOverview(d) {
     const e = d.decision.evidence;
-    $('cpTab').innerHTML = `
+    $('cpTab').innerHTML = glance(d) + `
       <div class="cp-grid2">${list('Contradicting evidence', e.contradicting, 'con')}${list('Supporting evidence', e.supporting, 'sup')}</div>
       <div class="cp-grid2">${list('Unknown or unavailable', e.unknown, 'unk')}${list('Alternative explanations', e.alternatives)}</div>
       <div class="cp-grid2">${list('Assumptions that could be wrong', e.assumptions)}${list('Conditions that would change the conclusion', e.failureConditions)}</div>

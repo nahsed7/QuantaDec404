@@ -175,13 +175,11 @@ const KR_PAIRS = ['EUR/USD', 'GBP/USD', 'AUD/USD', 'USD/CAD', 'USD/CHF', 'EUR/GB
 const KR = { ws: null, subs: new Set(), want: new Map(), quote: {}, basis: {}, resid2: {}, status: 'idle', reconnect: null, gen: 0 };
 const krLive = p => KR_PAIRS.includes(p) && KR.quote[p] && Date.now() - KR.quote[p].at < 5000 && KR.basis[p] != null;
 const round = (x, p) => +x.toFixed(p.endsWith('JPY') ? 3 : 5);
-let outbox = [];
-const emit = ev => { outbox.push(ev); };
-setInterval(() => {                                     // flush to browsers every 40 ms (≤ 25 messages/s per client)
-  if (!outbox.length) return;
-  const msg = 'data: ' + JSON.stringify(outbox) + '\n\n'; outbox = [];
-  for (const c of FX.clients) c.write(msg);
-}, 40);
+// Events are sent as soon as the current event-loop turn ends (setImmediate), so ticks that arrive together share one
+// message but none waits for a timer. (A 40 ms flush timer used to add ~20 ms on average.)
+let outbox = [], flushing = false;
+const flush = () => { flushing = false; if (!outbox.length) return; const msg = 'data: ' + JSON.stringify(outbox) + '\n\n'; outbox = []; for (const c of FX.clients) c.write(msg); };
+const emit = ev => { outbox.push(ev); if (!flushing) { flushing = true; setImmediate(flush); } };
 function krSync() {
   const now = Date.now(), want = new Set([...KR.want].filter(([, t]) => now - t < 60000).map(([p]) => p).filter(p => KR_PAIRS.includes(p)));
   if (!want.size) { if (KR.ws) { KR.gen++; KR.ws.close(); KR.ws = null; KR.subs.clear(); KR.status = 'idle'; } return; }
@@ -238,7 +236,7 @@ async function pollFX() {
   } catch (e) { FX.err = String(e.message); }
   finally { FX.inflight--; }
 }
-setInterval(() => { if ((FX.clients.size || Date.now() - FX.lastWant < 600e3) && FX.inflight < 2) pollFX(); }, 300);
+setInterval(() => { if ((FX.clients.size || Date.now() - FX.lastWant < 600e3) && FX.inflight < 2) pollFX(); }, 200);   // TrueFX updates ~1/s; a 200 ms poll notices a change within ~100 ms on average
 setInterval(() => { for (const c of FX.clients) c.write(': keep-alive\n\n'); }, 15000);
 const YF = { '1m': ['1m', '1d'], '5m': ['5m', '5d'], '15m': ['15m', '5d'], '1h': ['60m', '1mo'] };
 const yahooFX = (pair, iv) => cached(`yfx:${pair}:${iv}`, 60000, async () => {
@@ -373,7 +371,8 @@ http.createServer(async (req, res) => {
         return json(res, 200, await fxBars(pair, q.get('interval')));
       }
       case '/api/fx/stream': {      // Server-Sent Events: every new TrueFX quote, as soon as it arrives
-        res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
+        res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+        res.flushHeaders?.();
         res.write('retry: 2000\n\n');
         const want = (q.get('pairs') || '').split(',').filter(p => FX_PAIRS.includes(p));
         const snap = Object.values(FX.last).map(x => ({ k: 'tq', ...x }))
@@ -450,7 +449,8 @@ http.createServer(async (req, res) => {
     if (e.code === 'ENOENT') { res.writeHead(404); return res.end('not found'); }
     json(res, 502, { error: String(e.message) });
   }
-}).listen(PORT, '0.0.0.0', () => {
+}).on('connection', sock => sock.setNoDelay(true))   // no Nagle delay: small live messages (SSE ticks) go out immediately
+  .listen(PORT, '0.0.0.0', () => {
   console.log(`Market Microstructure Laboratory\n  this device:  http://localhost:${PORT}`);
   console.log(`  write access from another device: add ?token=${AUTH.token()} to the address once`);
   for (const [name, nets] of Object.entries(os.networkInterfaces()))

@@ -46,3 +46,13 @@ test('portfolio lab, paper book and the six workstation sections render from the
   }
   assert.deepEqual(E.errors, []);
 });
+test('Part 10 summaries: market pulse sentence and the at-a-glance thermometer contain no invalid numbers, even in SVG attributes', async () => {
+  const E = env(); for (const [k, v] of Object.entries({ hmRegion: 'all', hmGroup: 'sector', hmColor: 'd1', hmSize: 'cap' })) E.el(k).value = v;
+  E.load('lib/stats.js', 'lib/treemap.js', 'lib/encodings.js', 'lib/valuation.js', 'lib/quant.js', 'lib/decision.js', 'public/heat.js'); await settle();
+  E.ctx.HEAT.draw(); assert.match(E.els.hmPulse.innerHTML, /Today:/); assert.equal(E.bad(E.els.hmPulse.innerHTML), null);
+  for (const sym of ['AAPL', '7203.T', '0700.HK', 'JPM']) {
+    await E.ctx.HEAT.open(sym); const h = E.els.cpTab.innerHTML;
+    assert.match(h, /class="glance"/); assert.ok(!/NaN|Infinity|(?<!is )undefined/.test(h), `${sym}: invalid value in markup`);
+    if (sym !== '0700.HK') assert.match(h, /<svg class="thermo"/); else assert.match(h, /No valuation range/);
+  }
+});

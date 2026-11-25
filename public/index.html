@@ -61,6 +61,7 @@
 <section id="heat" class="view on">
   <h2>§1 Valuation-integrated market map</h2>
   <div class="hm-regime" id="hmRegime"></div>
+  <p class="pulse" id="hmPulse"></p>
   <div class="hm-ctl">
     <label>Size <select id="hmSize"></select></label>
     <label>Colour <select id="hmColor"></select></label>
@@ -83,7 +84,8 @@
 
 <!-- §2 -->
 <section id="state" class="view">
-  <h2>§2 Ten-dimensional market state</h2>
+  <h2>§2 Live market <span class="muted">· what is happening right now</span> <button class="btn mini" id="stMode" title="Simple: live chart, plain-language summary and depth. Advanced: adds the 10-dimensional 3D view.">Show advanced 3D view</button></h2>
+  <p class="plain-now" id="plainNow">Waiting for trades…</p>
   <div class="readout" id="readout"></div>
   <div class="trade-grid">
   <figure class="fig wide">
@@ -129,6 +131,7 @@
       <div class="tbl"><table class="pos-t"><thead><tr><th>#</th><th>Instrument</th><th>Side</th><th>Size</th><th>Entry</th><th>Exit</th><th>P&amp;L</th><th>Reason</th><th>Closed</th></tr></thead>
       <tbody id="histBody"></tbody></table></div></details>
   </figure>
+  <div class="adv">
   <div class="controls inline">
     <label>Third axis (z) <select id="zax"></select></label>
     <label>Colour <select id="cax"></select></label>
@@ -168,6 +171,7 @@
       <div class="inspect" id="inspect"></div>
       <p class="note" id="sentNote"></p>
     </figure>
+  </div>
   </div>
   <figure class="fig wide" style="margin-top:12px">
     <div class="plot" id="pDepth" style="height:300px"></div>
