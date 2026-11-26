@@ -138,29 +138,28 @@
     <span class="hint">x = time and y = price are fixed.</span>
   </div>
   <div class="controls inline scene-ctl">
-    <span class="hint">View</span><div class="chips" id="views"><button class="btn chip" data-v="3d">3D</button><button class="btn chip" data-v="top">Top: price vs time</button>
-      <button class="btn chip" data-v="front">Front: z vs time</button><button class="btn chip" data-v="side">Side: z vs price</button><button class="btn chip" data-v="rotate">⟳ Auto-rotate</button></div>
+    <div class="chips" id="viewsFallback" hidden><button class="btn chip" onclick="plotlyView('3d')">3D</button><button class="btn chip" onclick="plotlyView('top')">Top</button>
+      <button class="btn chip" onclick="plotlyView('front')">Front</button><button class="btn chip" onclick="plotlyView('side')">Side</button><button class="btn chip" onclick="plotlyView('rotate')">⟳ Rotate</button></div>
     <span class="hint">Show</span><div class="chips" id="layers"></div>
   </div>
   <div class="readme fig">
-    <b>How to read the 3D graph</b>
+    <b>How to read it</b> <span class="muted">· new here? press <b>▶ Explain it to me</b> on the graph for a 1-minute walkthrough</span>
     <ul>
-      <li><b>Each dot is one bar</b> of time. Left to right is time (0 = now), depth is price, and height is the third axis you chose.</li>
-      <li><b>Dot colour</b> is the colour dimension you chose (see the colour bar). <b>Dot size</b> is liquidity: bigger means more orders waiting in the book.</li>
-      <li><b>Dot shape</b> shows who pushed: ◆ buyers, ■ sellers, ● balanced. A hollow dot is from before order-book recording began.</li>
-      <li><b>Stem colour</b>: green means more bids waiting, red means more asks waiting. The <b>floor line</b> is the price path.</li>
-      <li>The <b>violet cloud</b> on the right shows where price has tended to go from here in this sample. Denser means more often. It describes the past, not a prediction.</li>
-      <li><b>Drag</b> to rotate, <b>scroll or pinch</b> to zoom, <b>click a dot</b> for an explanation, and use the chips to change the view or hide layers.</li>
+      <li><b>● Live focus</b> (the default) locks the camera onto the <b>current price</b> and follows every quote. Only the last few dozen bars are in frame, the bright trail is the latest quotes and the badge says how fast price is moving.</li>
+      <li><b>Whole period</b>, <b>Front</b>, <b>Top</b> and <b>Side</b> zoom out to the full sample. The back wall is the normal price chart (time left → right, price up), and each dot sticks out of it by the third axis you chose.</li>
+      <li><b>Colour</b> is your colour dimension (bar at the bottom left), <b>size</b> is liquidity, and <b>shape</b> shows who pushed: ◆ buyers, ■ sellers, ● balanced. Faded dots are from before the order book was recorded.</li>
+      <li><b>Stem colour</b>: green means more buy orders waiting, red more sell orders. The <b>violet cloud</b> right of now is where price went next in the past, not a prediction.</li>
+      <li><b>Drag</b> to turn, <b>scroll or pinch</b> to zoom, <b>tap a dot</b> for a plain-language explanation, <b>double-tap</b> to return to live focus, <b>⛶</b> for full screen.</li>
     </ul>
   </div>
   <div class="grid2 key-grid">
     <figure class="fig span2">
-      <div class="plot tall" id="p8d"></div>
-      <figcaption><b>Figure 2.</b> Each marker is one bar. Spatial axes: time relative to now, price <i>P</i>, and the selected third axis.
-        The remaining dimensions are encoded by colour, size, shape, stem colour, floor-path colour and the surface (Table 1, updated live).
-        The bright point at <i>t</i> = 0 is the live mid price. The violet cloud of sprinkles to the right of now
-        is the empirical distribution of future prices, estimated with a Gaussian kernel from all overlapping <i>h</i>-bar log-returns
-        in the sample. It is an unconditional description of past behaviour, not a forecast.</figcaption>
+      <div id="s3d"></div>
+      <div class="plot tall" id="p8d" hidden></div>
+      <figcaption><b>Figure 2.</b> Each marker is one bar. The back wall is price against time relative to now; each marker stands out of it by the selected third axis.
+        The remaining dimensions are encoded by colour, size, shape, stem colour and wall-path colour (sentiment where available; Table 1, updated live).
+        The pulsing point at <i>t</i> = 0 is the live mid price. The violet cloud to the right of now is the empirical distribution of future prices,
+        estimated with a Gaussian kernel from all overlapping <i>h</i>-bar log-returns in the sample. It is an unconditional description of past behaviour, not a forecast.</figcaption>
     </figure>
     <figure class="fig table-fig">
       <table class="enc">
@@ -288,6 +287,7 @@
 <footer class="status mono" id="status"></footer>
 <script src="/lib/stats.js"></script><script src="/lib/treemap.js"></script><script src="/lib/encodings.js"></script><script src="/lib/valuation.js"></script><script src="/lib/quant.js"></script><script src="/lib/decision.js"></script>
 <script src="lab.js"></script>
+<script src="scene3d.js"></script>
 <script src="app.js"></script>
 <script src="trade.js"></script>
 <script src="heat.js"></script><script src="validation.js"></script><script src="portfolio.js"></script><script src="paper.js"></script><script src="workstation.js"></script>

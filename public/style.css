@@ -252,3 +252,72 @@ td.z-hi{background:rgba(0,200,120,.18)}td.z-lo{background:rgba(214,39,70,.18)}
 .gtrack{height:10px;background:rgba(127,127,127,.18);border-radius:5px;overflow:hidden}.gfill{display:block;height:100%;border-radius:5px}
 .g-opp{background:var(--buy)}.g-risk{background:var(--sell)}.g-conf{background:var(--accent2)}.gval{text-align:right;font-family:var(--mono)}
 @media (max-width:600px){.gbar{grid-template-columns:80px 1fr 30px}.gmean{grid-column:1/-1}}
+
+/* ---- §2 simple mode: hide the advanced 3D block (the rule was missing, so an empty chart showed) ---- */
+#state.simple .adv{display:none}
+
+/* ---- §2 animated 3D scene (scene3d.js) ---- */
+.s3{position:relative;height:min(84vh,880px);min-height:480px;border-radius:6px;overflow:hidden;user-select:none;-webkit-user-select:none;
+  background:radial-gradient(ellipse 70% 60% at 50% 45%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%), var(--panel-solid)}
+@media (max-width:700px){.s3{height:78vh;min-height:440px}}
+.s3.s3-max{position:fixed;inset:0;height:100vh;height:100dvh;z-index:90;border-radius:0}
+body.s3-lock{overflow:hidden}
+.s3-cv{display:block;width:100%;height:100%;cursor:grab}
+.s3-cv:active{cursor:grabbing}
+.s3-labels{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.s3-l{position:absolute;left:0;top:0;font:11px var(--mono);color:var(--muted);white-space:nowrap;will-change:transform}
+.s3-l.ax{font:600 12px var(--mono);color:var(--accent);text-shadow:var(--tglow)}
+.s3-l.az{color:var(--accent2)}
+.s3-l.now{font:600 12px var(--mono);color:var(--accent);background:color-mix(in srgb, var(--panel-solid) 80%, transparent);padding:1px 5px;border-radius:3px;border:1px solid var(--accent)}
+.s3-l b{color:var(--accent)}
+.s3-top{position:absolute;top:10px;left:10px;right:10px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;pointer-events:none}
+.s3-top>*{pointer-events:auto}
+.s3-views,.s3-right{display:flex;flex-wrap:wrap;gap:6px}
+.s3-btn{font:500 12px var(--mono);color:var(--text);background:color-mix(in srgb, var(--panel-solid) 82%, transparent);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  border:1px solid var(--line);border-radius:16px;padding:6px 11px;cursor:pointer;transition:border-color .2s,color .2s,transform .15s}
+.s3-btn:hover{border-color:var(--accent);color:var(--accent)}
+.s3-btn:active{transform:scale(.96)}
+.s3-btn.on{border-color:var(--accent);color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset,var(--glow)}
+.s3-btn:disabled{opacity:.35;cursor:default}
+.s3-cta{border-color:var(--accent);color:var(--accent);font-weight:600}
+@media (prefers-reduced-motion:no-preference){.s3-cta[data-a="tour"]{animation:s3pulse 2.6s ease-in-out infinite}}
+@keyframes s3pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent)}50%{box-shadow:0 0 0 6px transparent}}
+.s3-legend{position:absolute;left:10px;bottom:10px;display:flex;gap:8px;flex-wrap:wrap;pointer-events:none;max-width:calc(100% - 20px)}
+.s3-lg{background:color-mix(in srgb, var(--panel-solid) 85%, transparent);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border:1px solid var(--line);border-radius:6px;padding:6px 9px;
+  font:11px var(--mono);color:var(--text);display:flex;flex-direction:column;gap:3px;transition:border-color .3s,box-shadow .3s,transform .3s}
+.s3-lg.hi{border-color:var(--warn);box-shadow:0 0 0 1px var(--warn),0 0 18px color-mix(in srgb, var(--warn) 35%, transparent);transform:translateY(-3px)}
+.s3-lg .k{color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.05em}
+.s3-grad{width:170px;height:9px;border-radius:5px}
+.s3-gl{display:flex;justify-content:space-between;color:var(--muted)}
+.s3-shapes{display:flex;gap:10px;align-items:center}
+.s3-sz{display:inline-flex;gap:4px;align-items:center}.s3-sz i{display:inline-block;border-radius:50%;background:var(--accent)}
+.s3-tip{position:absolute;pointer-events:none;background:var(--panel-solid);border:1px solid var(--accent);border-radius:6px;padding:7px 10px;font:11.5px/1.45 var(--mono);color:var(--text);
+  box-shadow:var(--glow);max-width:260px;z-index:3}
+.s3-tip b{color:var(--accent)}
+.s3-tour{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);width:min(560px,calc(100% - 20px));background:color-mix(in srgb, var(--panel-solid) 92%, transparent);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid var(--accent);border-radius:10px;padding:12px 14px;box-shadow:var(--glow),0 12px 40px -12px rgba(0,0,0,.5);z-index:4;
+  font:13.5px/1.55 var(--sans);color:var(--text)}
+.s3-tour.in{animation:s3in .45s cubic-bezier(.2,.8,.2,1)}
+@keyframes s3in{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
+.s3-tour-h{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+.s3-tour-h .s3-th{font:600 15px var(--mono);color:var(--accent);flex:1}
+.s3-step{font:11px var(--mono);color:var(--muted)}
+.s3-x{padding:3px 8px}
+.s3-tt b{color:var(--accent)} .s3-tt b.up{color:var(--buy)} .s3-tt b.down{color:var(--sell)}
+.s3-dots{display:flex;gap:5px;margin:8px 0}
+.s3-dots i{flex:1;height:3px;border-radius:2px;background:var(--line);transition:background .3s}
+.s3-dots i.done{background:color-mix(in srgb, var(--accent) 50%, transparent)}.s3-dots i.on{background:var(--accent)}
+.s3-tour-nav{display:flex;gap:6px;justify-content:flex-end}
+.s3-msg{position:absolute;inset:0;display:grid;place-items:center;font:13px var(--mono);color:var(--muted);pointer-events:none;padding:20px;text-align:center}
+.s3-msg[hidden]{display:none}
+.s3:has(.s3-tour:not([hidden])) .s3-legend{bottom:auto;top:56px}
+@media (max-width:700px){.s3-btn{font-size:11px;padding:5px 9px}.s3-grad{width:120px}.s3-tour{font-size:13px;padding:10px 12px}}
+.s3-pulse{position:absolute;top:52px;left:10px;font:12.5px var(--mono);color:var(--text);background:color-mix(in srgb, var(--panel-solid) 85%, transparent);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border:1px solid var(--line);border-radius:16px;padding:5px 12px;pointer-events:none;transition:border-color .3s,color .3s}
+.s3-pulse[hidden]{display:none}
+.s3-pulse .ar{margin-right:6px}
+.s3-pulse.up{border-color:var(--buy)}.s3-pulse.up .ar,.s3-pulse.up b{color:var(--buy)}
+.s3-pulse.down{border-color:var(--sell)}.s3-pulse.down .ar,.s3-pulse.down b{color:var(--sell)}
+.s3-pulse b.fast{color:var(--warn)!important}
+.s3-btn.s3-live.on{background:color-mix(in srgb, var(--accent) 16%, var(--panel-solid))}
+@media (max-width:700px){.s3-pulse{top:88px;font-size:11.5px}}

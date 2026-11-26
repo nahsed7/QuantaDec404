@@ -670,3 +670,13 @@ The user's request: "a 10th layer entirely focusing on intuitive visualization r
 - **Decision:** new shares are found from the order status (`filled_qty`, `filled_avg_price`), not from the account-activities feed. It needs one call per order and cannot double-count. The cost is that partial fills between two polls merge into one fill.
 - **Tests:** 124 pass, 2 of them new, against a fake Alpaca API. The real endpoint stays untested until keys are given.
 
+
+## 21. Follow-up: animated 3D market scene with live focus (2026-11-26)
+The user's request: the §2 "10-D" graph should be bigger and more intuitive, have real top/side views, feel like an interactive animated website, and **follow the current price** instead of showing the whole period by default.
+- **New renderer** `public/scene3d.js`: Three.js 0.160.0 (jsDelivr, loaded on first use of the advanced view). If it cannot load, the old Plotly chart is used.
+- **Live focus (default):** the camera locks onto the current price dot and chases it. Only the last 36 bars are in frame; the price and height scales zoom around the newest ~60 % of them. Every quote moves the dot immediately (`Scene3D.live`), not only on the 10 fps redraw. A trail of the latest quotes leads into the dot, coloured by direction and fading with age. A badge shows the move over the last 10 s in bp and whether that is fast, normal or calm against this session's median.
+- **Whole-period views:** Whole period, Front (the ordinary price chart), Top (third axis over time), Side (third axis vs price), plus slow rotate. The back wall is the price chart and each dot sticks out of it by the chosen third axis, so each view has a plain meaning. Camera moves are animated. The visible range eases every frame, so zooms and data changes glide.
+- **"Explain it to me":** a 9-step walkthrough that moves the camera and dims everything except the dimension being explained. It can auto-play and ends back in live focus.
+- Larger scene (up to 84 vh), full-screen button, overlay legend for colour, shape and size, hover tooltip, tap a dot for the plain-language explanation, double-tap to return to live focus.
+- **Bug fixed:** simple mode never hid the advanced block (the CSS rule was missing), so an empty 3D chart showed under the summary.
+- **Verification:** 124 tests pass. There is no browser on the phone, so the scene was run headless (jsdom + real Three.js, GPU renderer stubbed): views, tour, live quotes, badge, hover, tap, drag, symbol switch, theme switch and full screen, with no errors. On 800×500 and 390×640 screens the live dot lands near the centre. That run found and fixed an unclamped camera tween that could extrapolate. **Not yet seen on a real screen.**

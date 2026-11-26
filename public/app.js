@@ -201,6 +201,7 @@ function onQuote(d) {
   if (mid > 0) { NAR.spreads.push((ask - bid) / mid); if (NAR.spreads.length > 2000) NAR.spreads.splice(0, 500); }
   if (M.quote && mid !== M.quote.mid) M.dir = mid > M.quote.mid ? 1 : -1;
   M.quote = { bid, ask, mid, t: now }; M.qcount++;
+  if (window.Scene3D?.ready) Scene3D.live(mid, now);       // live focus: the 3D dot moves on every quote, not every redraw
   const tfMs = CND.tf * 1000, ct = Math.floor(now / tfMs) * tfMs;
   if (!CND.qx || CND.qx.t !== ct || CND.qx.tf !== CND.tf) CND.qx = { t: ct, tf: CND.tf, h: mid, l: mid }; else { CND.qx.h = Math.max(CND.qx.h, mid); CND.qx.l = Math.min(CND.qx.l, mid); }
   const last = M.ticks[M.ticks.length - 1];
@@ -251,7 +252,8 @@ const STATE_SIMPLE = () => document.getElementById('state')?.classList.contains(
 (function initStateMode() {
   const sec = document.getElementById('state'), btn = document.getElementById('stMode'); if (!sec || !btn) return;
   let simple = true; try { simple = localStorage.getItem('state-mode') !== 'advanced'; } catch {}
-  const apply = () => { sec.classList.toggle('simple', simple); btn.textContent = simple ? 'Show advanced 3D view' : 'Back to simple view'; if (!simple) { dirty.state = true; setTimeout(() => { try { Plotly.Plots.resize('p8d'); } catch {} }, 50); } };
+  const apply = () => { sec.classList.toggle('simple', simple); btn.textContent = simple ? 'Show advanced 3D view' : 'Back to simple view';
+    if (!simple) { initScene(); dirty.state = true; setTimeout(() => { try { Scene3D.failed ? Plotly.Plots.resize('p8d') : Scene3D.resize(); } catch {} }, 50); } };
   btn.onclick = () => { simple = !simple; try { localStorage.setItem('state-mode', simple ? 'simple' : 'advanced'); } catch {} apply(); };
   apply();
 })();
@@ -515,16 +517,25 @@ const frac = x => x - Math.floor(x);
 const V3 = { layers: { bars: true, stems: true, path: true, cloud: true, now: true, box: true }, cam: { eye: { x: 1.5, y: -1.75, z: 0.75 }, up: { x: 0, y: 0, z: 1 } },
              camRev: 0, rotate: false, sel: null, box: null, fcRef: null, fcPts: [] };
 try { const l = JSON.parse(localStorage.getItem('layers3d') || 'null'); if (l) Object.assign(V3.layers, l); } catch {}
-const LAYERS = [['bars', 'Bars (dots)'], ['stems', 'Stems'], ['path', 'Price path'], ['cloud', 'Future cloud'], ['now', 'Live price'], ['box', 'Sprinkle box']];
+const LAYERS = [['bars', 'Bars (dots)'], ['stems', 'Stems'], ['path', 'Price path'], ['cloud', 'Future cloud'], ['now', 'Live price'], ['box', 'Walls & grid']];
 function renderLayerChips() { $('layers').innerHTML = LAYERS.map(([k, n]) => `<button class="btn chip ${V3.layers[k] ? 'on' : ''}" data-l="${k}">${V3.layers[k] ? '☑' : '☐'} ${n}</button>`).join(''); }
 renderLayerChips();
 $('layers').onclick = e => { const k = e.target.closest('[data-l]')?.dataset.l; if (!k) return; V3.layers[k] = !V3.layers[k];
   try { localStorage.setItem('layers3d', JSON.stringify(V3.layers)); } catch {} renderLayerChips(); dirty.state = true; };
 const VIEWS = { '3d': { eye: { x: 1.5, y: -1.75, z: 0.75 } }, top: { eye: { x: 0, y: -0.001, z: 2.6 } }, front: { eye: { x: 0, y: -2.6, z: 0.05 } }, side: { eye: { x: 2.6, y: 0, z: 0.05 } } };
-$('views').onclick = e => { const v = e.target.closest('[data-v]')?.dataset.v; if (!v) return;
-  if (v === 'rotate') { V3.rotate = !V3.rotate; if (!V3.rotate && V3.lastCam) { V3.cam = V3.lastCam; V3.camRev++; } e.target.closest('button').classList.toggle('on', V3.rotate); }
-  else { V3.rotate = false; document.querySelector('#views [data-v="rotate"]')?.classList.remove('on'); V3.cam = { ...VIEWS[v], up: { x: 0, y: 0, z: 1 } }; V3.camRev++; }
-  dirty.state = true; };
+// Plotly fallback only: the WebGL scene has its own view buttons (scene3d.js).
+function plotlyView(v) {
+  if (v === 'rotate') { V3.rotate = !V3.rotate; if (!V3.rotate && V3.lastCam) { V3.cam = V3.lastCam; V3.camRev++; } }
+  else if (VIEWS[v]) { V3.rotate = false; V3.cam = { ...VIEWS[v], up: { x: 0, y: 0, z: 1 } }; V3.camRev++; }
+  dirty.state = true; }
+function initScene() {
+  if (!window.Scene3D || initScene.done) return; initScene.done = true;
+  Scene3D.init($('s3d'), { active: () => view === 'state' && !STATE_SIMPLE(),
+    onPick: t => { V3.sel = V3.sel === t ? null : t; if (V3.sel == null) $('inspect').innerHTML = INSPECT_EMPTY; dirty.state = true;
+      if (V3.sel != null && window.innerWidth < 1100) $('inspect').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); },
+    onFail: () => { $('s3d').hidden = true; $('p8d').hidden = false; $('viewsFallback').hidden = false; dirty.state = true; setTimeout(() => { try { Plotly.Plots.resize('p8d'); } catch {} }, 50); } });
+}
+
 $('inspect').onclick = e => { if (e.target.closest('[data-x]')) { V3.sel = null; $('inspect').innerHTML = INSPECT_EMPTY; dirty.state = true; } };
 const INSPECT_EMPTY = '<div class="s">Click any dot in the 3D graph to see what was happening in that bar, in plain words.</div>';
 $('inspect').innerHTML = INSPECT_EMPTY;
@@ -622,20 +633,48 @@ function drawState() {
     [['q05', 'dash', '5 %'], ['q50', 'solid', 'median'], ['q95', 'dash', '95 %']].forEach(([key, d]) =>
       traces.push({ type: 'scatter3d', mode: 'lines', x: fc.hs.map(h => xo + h), y: fc[key], z: fc.hs.map(() => zMin), line: { color: css('--violet'), width: 3, dash: d }, hoverinfo: 'skip', name: key }));
   }
-  let cam = V3.cam, uirev = M.sym + M.iv + ':' + V3.camRev;
-  if (V3.rotate) { const a = performance.now() / 7000; cam = { eye: { x: 2.1 * Math.cos(a), y: 2.1 * Math.sin(a), z: 0.75 }, up: { x: 0, y: 0, z: 1 } }; V3.lastCam = cam; uirev = 'rot' + performance.now(); }
-  const noBg = { showbackground: false, gridcolor: css('--grid'), zeroline: false };
-  plot('p8d', traces, base({ margin: { t: 0, l: 0, r: 0, b: 0 }, uirevision: uirev,
-    scene: { xaxis: ax3(`time (${IV_UNIT[M.iv]}, 0 = now)`, noBg), yaxis: ax3('price', { ...noBg, tickformat: '.6~g' }), zaxis: ax3(Z.name.toLowerCase(), noBg),
-      aspectmode: 'manual', aspectratio: { x: 1.8, y: 1, z: 0.7 }, camera: cam, dragmode: 'turntable', uirevision: uirev } }));
-  const gd = $('p8d');
-  if (gd.on && !gd._inspectBound) {
-    gd._inspectBound = true;
-    gd.on('plotly_click', ev => {
-      const p = ev.points.find(pt => pt.data.name === 'bars'); if (!p) return;
-      const Fs = sample(); const f = Fs.find(x => Math.abs(rel(x.t) - p.x) < 1e-9 && x.c === p.y) || Fs[p.pointNumber];
-      if (f) { V3.sel = f.t; dirty.state = true; }
+  if (window.Scene3D && !Scene3D.failed) {
+    // Animated WebGL scene (scene3d.js): positions in data units, colours resolved here so both renderers agree.
+    const rgb = (stops, t) => Scene3D.scaleRGB(stops, t), cs_ = C.div ? divScale() : seqScale();
+    const cLo = C.div ? -cAbs : Math.min(...cvals), cHi = C.div ? cAbs : Math.max(...cvals), cT = v => (v - cLo) / ((cHi - cLo) || 1);
+    const sentS = [[0, '#2f7bff'], [0.5, '#7a8a85'], [1, '#ff9f43']], acc2 = Scene3D.scaleRGB([[0, css('--accent2')], [1, css('--accent2')]], 0);
+    const tipOf = h => `<b>${h[0]}</b><br>price <b>${h[1]}</b><br>${h[9]}: <b>${h[10]}</b><br>buyers ${h[11]} of volume<br>book: bids ${h[7]} · asks ${h[8]}<br><i>tap for the full story</i>`;
+    const fmtL = v => Math.abs(v) >= 1e4 ? fmt(v, 0) : sig(v, 3);
+    Scene3D.setLayers({ walls: LY.box, bars: LY.bars, stems: LY.stems, path: LY.path, cloud: LY.cloud, now: LY.now });
+    Scene3D.update({
+      key: M.sym + M.iv + $('zax').value + $('win').value, dtMs: dt, nowMs: now,
+      ticks: M.ticks.filter(k => k.t >= now - 40 * dt).map(k => ({ t: k.t, mid: k.mid })),
+      x: [xs[0], xEnd], p: [yLo, yHi], z: [zMin, zMax === zMin ? zMin + 1 : zMax],
+      labels: { x: `time (${IV_UNIT[M.iv]}, 0 = now)`, y: 'price', z: Z.name.toLowerCase(), zName: Z.name.toLowerCase() },
+      legend: { name: C.name.toLowerCase(), stops: cs_, lo: fmtL(cLo), hi: fmtL(cHi) },
+      sel: V3.sel,
+      bars: F.map((f, i) => ({ t: f.t, x: xs[i], p: f.c, z: zv[i], rgb: rgb(cs_, cT(cv[i] ?? 0)), size: f.liq == null ? 0.15 : (f.liq - lmin) / ((lmax - lmin) || 1),
+        shape: f.press > 0.2 ? 'buy' : f.press < -0.2 ? 'sell' : 'flat', hollow: f.liq == null,
+        stem: rgb(divScale(), ((f.bidD == null ? 0 : f.bidD - f.askD) + dAbs) / (2 * dAbs)), tip: tipOf(hover[i]) })),
+      path: F.map((f, i) => ({ x: xs[i], p: f.c, rgb: M.sent.available ? rgb(sentS, ((f.sent ?? 0) + 1) / 2) : acc2 })),
+      now: q ? { p: q.mid, z: zv[zv.length - 1], down: M.dir < 0 } : null,
+      cloud: fc ? (() => { if (V3.fcRef !== fc) { V3.fcRef = fc; const pts = [], dmax = Math.max(...fc.dens.flat()) || 1, dy = fc.prices[1] - fc.prices[0], dh = fc.hs[1] - fc.hs[0]; let k = 0;
+          fc.hs.forEach((h, hi) => fc.prices.forEach((p, yi) => { const n = Math.round(6 * fc.dens[hi][yi] / dmax);
+            for (let j = 0; j < n; j++, k++) pts.push([h + (frac(k * 0.618034) - 0.5) * dh, p + (frac(k * 0.414214) - 0.5) * dy, frac(k * 0.732051), fc.dens[hi][yi] / dmax]); }));
+          V3.fcPts = pts; }
+        const xo = rel(t0); return { pts: V3.fcPts, xo, q: { x: fc.hs.map(h => xo + h), q05: fc.q05, q50: fc.q50, q95: fc.q95 } }; })() : null,
     });
+  } else {
+    let cam = V3.cam, uirev = M.sym + M.iv + ':' + V3.camRev;
+    if (V3.rotate) { const a = performance.now() / 7000; cam = { eye: { x: 2.1 * Math.cos(a), y: 2.1 * Math.sin(a), z: 0.75 }, up: { x: 0, y: 0, z: 1 } }; V3.lastCam = cam; uirev = 'rot' + performance.now(); }
+    const noBg = { showbackground: false, gridcolor: css('--grid'), zeroline: false };
+    plot('p8d', traces, base({ margin: { t: 0, l: 0, r: 0, b: 0 }, uirevision: uirev,
+      scene: { xaxis: ax3(`time (${IV_UNIT[M.iv]}, 0 = now)`, noBg), yaxis: ax3('price', { ...noBg, tickformat: '.6~g' }), zaxis: ax3(Z.name.toLowerCase(), noBg),
+        aspectmode: 'manual', aspectratio: { x: 1.8, y: 1, z: 0.7 }, camera: cam, dragmode: 'turntable', uirevision: uirev } }));
+    const gd = $('p8d');
+    if (gd.on && !gd._inspectBound) {
+      gd._inspectBound = true;
+      gd.on('plotly_click', ev => {
+        const p = ev.points.find(pt => pt.data.name === 'bars'); if (!p) return;
+        const Fs = sample(); const f = Fs.find(x => Math.abs(rel(x.t) - p.x) < 1e-9 && x.c === p.y) || Fs[p.pointNumber];
+        if (f) { V3.sel = f.t; dirty.state = true; }
+      });
+    }
   }
   if (sel >= 0) $('inspect').innerHTML = explainBar(F[sel], F, Z, zv[sel]);
 
